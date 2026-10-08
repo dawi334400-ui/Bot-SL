@@ -230,4 +230,4 @@ async def master_menu(interaction: discord.Interaction):
     await interaction.response.send_message("تم إرسال لوحة التقديمات بنجاح!", ephemeral=True)
 
 # تشغيل البوت بالتوكن الخاص بك
-bot.run(bot.run("MTU1MzAwOTMzNzAxNzA0MDk5Ng.GPIZBO.h72saFO6KwOVsvEle871_UuuN2YZ7NlFowoby0")
+bot.run(bot.run(".h72saFO6KwOVsvEle871_UuuN2YZ7NlFowoby0")
