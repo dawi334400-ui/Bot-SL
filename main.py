@@ -229,5 +229,5 @@ async def master_menu(interaction: discord.Interaction):
     await interaction.channel.send(embed=embed, view=MasterApplicationView())
     await interaction.response.send_message("تم إرسال لوحة التقديمات بنجاح!", ephemeral=True)
 
-# تشغيل البوت بالتوكن الخاص بك
-bot.run(bot.run(".h72saFO6KwOVsvEle871_UuuN2YZ7NlFowoby0")
+import os
+bot.run(os.getenv("TOKEN"))
