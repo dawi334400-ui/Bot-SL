@@ -16,4 +16,3 @@ async def on_ready():
 
 token = os.getenv("TOKEN")
 bot.run(token)
-
