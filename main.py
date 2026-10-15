@@ -1,5 +1,5 @@
 # ============================================================
-‏# Discord Server Bot - main.py
+# Discord Server Bot - main.py
 ‏# Python 3.10+
 ‏# Install:
 ‏#   pip install -U discord.py aiosqlite
