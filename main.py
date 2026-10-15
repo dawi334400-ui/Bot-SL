@@ -449,10 +449,10 @@ async def كشف_حساب(interaction: discord.Interaction, العضو: discord.
     embed.add_field(name="الكاش", value=f"{stats['cash']} $", inline=True)
     await interaction.response.send_message(embed=embed)
 
-@bot.tree.command(name="بنك", description="عرض رصيدك المالي الحالي")
-async def بنك(interaction: discord.Interaction):
-    stats = حساب_النقاط(interaction.user.id)
-    await interaction.response.send_message(f"رصيدك في البنك: {stats['bank']} $ \vert{} الكاش: {stats['cash']} $", ephemeral=True)
+    @bot.tree.command(name="بنك", description="عرض رصيدك المالي الحالي")
+    async def bank(interaction: discord.Interaction):
+        stats = get_user_stats(interaction.user.id)
+        await interaction.response.send_message(f"رصيدك في البنك: ${stats['bank']} | الكاش: ${stats['cash']}", ephemeral=True)
 
 @bot.tree.command(name="راتب", description="استلام الراتب اليومي")
 async def راتب(interaction: discord.Interaction):
