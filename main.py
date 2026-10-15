@@ -1,23 +1,23 @@
 # ============================================================
 # Discord Server Bot - main.py
-# Python 3.10+‏
-‏# Install:
-‏#   pip install -U discord.py aiosqlite
+# Python 3.10+
+# Install:
+#   pip install -U discord.py aiosqlite
 #
-‏# Environment variable:
-‏#   DISCORD_TOKEN=YOUR_BOT_TOKEN
+# Environment variable:
+#   DISCORD_TOKEN=YOUR_BOT_TOKEN
 #
-‏# Enable Server Members Intent in Discord Developer Portal.
+# Enable Server Members Intent in Discord Developer Portal.
 # ============================================================
 
-‏import os
-‏import io
-‏import json
-‏import time
-‏import random
-‏import asyncio
-‏import logging
-‏from datetime import datetime, timedelta, timezone
+import os
+import io
+import json
+import time
+import random
+import asyncio
+import logging
+from datetime import datetime, timedelta, timezone
 
 ‏import discord
 ‏import aiosqlite
