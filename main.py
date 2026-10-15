@@ -17,192 +17,17 @@ bot = commands.Bot(command_prefix="-", intents=intents)
 رقم_روم_اللوق = None  
 رقم_روم_الترحيب = None
 رقم_روم_الاقتراحات = None
-رقم_روم_الترقيات = None          # زيادة: روم ترقيات الشرطة
-رقم_روم_عصابات_الترقيات = None     # زيادة: روم ترقيات العصابات
-رقم_روم_الإدارة_الترقيات = None    # زيادة: روم ترقيات الإدارة
 رقم_رتبة_غير_مفعل = None  
 رقم_رتبة_المفعل = None    
 
 user_data = {}  
-RANKS_XP = {}         # زيادة: رتب ونقاط الشرطة
-GANG_RANKS_XP = {}    # زيادة: رتب ونقاط العصابات
-ADMIN_RANKS_XP = {}   # زيادة: رتب ونقاط الإدارة
 
 def حساب_النقاط(user_id):
     if user_id not in user_data:
         user_data[user_id] = {
-            "xp": 0, "level": 1, "bank": 1000, "cash": 500,
-            "reports": 0, "gang_reports": 0, "tickets_solved": 0, 
-            "admin_xp": 0, "total_tickets_opened": 0
+            "xp": 0, "level": 1, "bank": 1000, "cash": 500
         }
     return user_data[user_id]
-
-# --- زيادة: فحوصات الترقيات التلقائية للقطاعات ---
-async def فحص_الترقية(member: discord.Member):
-    stats = حساب_النقاط(member.id)
-    current_xp = stats["xp"]
-    new_rank = None
-    for rank_name, required_xp in RANKS_XP.items():
-        if current_xp >= required_xp:
-            new_rank = rank_name
-    if new_rank:
-        guild = member.guild
-        role = discord.utils.get(guild.roles, name=new_rank)
-        if role and role not in member.roles:
-            await member.add_roles(role)
-            if رقم_روم_الترقيات:
-                target_chan = guild.get_channel(رقم_روم_الترقيات)
-                if target_chan:
-                    embed = discord.Embed(
-                        title="🎖️ ترقية عسكرية جديدة!",
-                        description=f"تهانينا العريضة للعسكري {member.mention}\nتمت ترقيته رسمياً إلى رتبة **[{new_rank}]** بعد وصوله إلى {current_xp} XP.",
-                        color=discord.Color.gold()
-                    )
-                    await target_chan.send(embed=embed)
-
-async def فحص_ترقية_عصابة(member: discord.Member):
-    stats = حساب_النقاط(member.id)
-    current_xp = stats["xp"]
-    new_rank = None
-    for rank_name, required_xp in GANG_RANKS_XP.items():
-        if current_xp >= required_xp:
-            new_rank = rank_name
-    if new_rank:
-        guild = member.guild
-        role = discord.utils.get(guild.roles, name=new_rank)
-        if role and role not in member.roles:
-            await member.add_roles(role)
-            if رقم_روم_عصابات_الترقيات:
-                target_chan = guild.get_channel(رقم_روم_عصابات_الترقيات)
-                if target_chan:
-                    embed = discord.Embed(
-                        title="🏴 ترقية نفوذ عصابة جديدة!",
-                        description=f"تنبيه إجرامي! العضو {member.mention}\nارتفع نفوذه وتمت ترقيته إلى رتبة **[{new_rank}]** بعد وصوله إلى {current_xp} XP.",
-                        color=discord.Color.dark_red()
-                    )
-                    await target_chan.send(embed=embed)
-
-async def فحص_ترقية_إدارة(member: discord.Member):
-    stats = حساب_النقاط(member.id)
-    current_admin_xp = stats["admin_xp"]
-    new_rank = None
-    for rank_name, required_xp in ADMIN_RANKS_XP.items():
-        if current_admin_xp >= required_xp:
-            new_rank = rank_name
-    if new_rank:
-        guild = member.guild
-        role = discord.utils.get(guild.roles, name=new_rank)
-        if role and role not in member.roles:
-            await member.add_roles(role)
-            if رقم_روم_الإدارة_الترقيات:
-                target_chan = guild.get_channel(رقم_روم_الإدارة_الترقيات)
-                if target_chan:
-                    embed = discord.Embed(
-                        title="🛡️ ترقية إدارية مميزة!",
-                        description=f"شكراً لجهودك العظيمة يا إداري {member.mention}!\nتمت ترقيتك إلى رتبة **[{new_rank}]** بعد وصوله إلى {current_admin_xp} نقطة إدارية.",
-                        color=discord.Color.blue()
-                    )
-                    await target_chan.send(embed=embed)
-
-# --- زيادة: نظام أزرار تقييم التكت للإداري ---
-class تقييم_التكت_View(ui.View):
-    def __init__(self, admin_member: discord.Member):
-        super().__init__(timeout=None)
-        self.admin_member = admin_member
-
-    async def process_rating(self, interaction: discord.Interaction, stars: int):
-        stats = حساب_النقاط(self.admin_member.id)
-        stats["admin_xp"] += stars
-        stats["tickets_solved"] += 1
-        
-        embed = discord.Embed(
-            title="⭐ تم تقييم خدمة الإداري بنجاح",
-            description=f"تم منح الإداري {self.admin_member.mention} تقييم **{stars} نجوم**\nوعليه تمت إضافة **+{stars} نقاط إدارية** لرصيده!",
-            color=discord.Color.gold()
-        )
-        embed.add_field(name="إجمالي النقاط الإدارية", value=f"{stats['admin_xp']} نقطة", inline=True)
-        embed.add_field(name="إجمالي التكتات المحلولة", value=str(stats["tickets_solved"]), inline=True)
-        
-        await interaction.response.edit_message(embed=embed, view=None)
-        await فحص_ترقية_إدارة(self.admin_member)
-
-    @ui.button(label="⭐ 1", style=discord.ButtonStyle.secondary)
-    async def star_1(self, interaction: discord.Interaction, button: ui.Button):
-        await self.process_rating(interaction, 1)
-
-    @ui.button(label="⭐⭐ 2", style=discord.ButtonStyle.secondary)
-    async def star_2(self, interaction: discord.Interaction, button: ui.Button):
-        await self.process_rating(interaction, 2)
-
-    @ui.button(label="⭐⭐⭐ 3", style=discord.ButtonStyle.primary)
-    async def star_3(self, interaction: discord.Interaction, button: ui.Button):
-        await self.process_rating(interaction, 3)
-
-    @ui.button(label="⭐⭐⭐⭐ 4", style=discord.ButtonStyle.success)
-    async def star_4(self, interaction: discord.Interaction, button: ui.Button):
-        await self.process_rating(interaction, 4)
-
-    @ui.button(label="⭐⭐⭐⭐⭐ 5", style=discord.ButtonStyle.success)
-    async def star_5(self, interaction: discord.Interaction, button: ui.Button):
-        await self.process_rating(interaction, 5)
-
-# --- زيادة: منيو تقفيل التكت ---
-class منيو_تقفيل_التكت(ui.View):
-    def __init__(self, admin_member: discord.Member):
-        super().__init__(timeout=None)
-        self.admin_member = admin_member
-
-    @ui.button(label="🔒 قفل التكت والتقييم", style=discord.ButtonStyle.danger)
-    async def قفل_التكت(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.manage_channels:
-            await interaction.response.send_message("للمشرفين والإدارة فقط", ephemeral=True)
-            return
-        
-        view = تقييم_التكت_View(self.admin_member)
-        embed = discord.Embed(
-            title="🔒 تم إغلاق التكت",
-            description=f"الرجاء تقييم أداء الإداري المسؤول ({self.admin_member.mention}) بالضغط على عدد النجوم المناسب بالأسفل:",
-            color=discord.Color.green()
-        )
-        await interaction.response.send_message(embed=embed, view=view)
-
-# --- زيادة: منيو فتح التكتات الأساسي ---
-class منيو_فتح_التكت(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @ui.button(label="🎫 فتح تكت دعم جديد", style=discord.ButtonStyle.primary, emoji="📩")
-    async def فتح_تكت(self, interaction: discord.Interaction, button: ui.Button):
-        guild = interaction.guild
-        member = interaction.user
-        
-        stats = حساب_النقاط(member.id)
-        stats["total_tickets_opened"] += 1
-
-        if رقم_روم_اللوق:
-            log_chan = guild.get_channel(رقم_روم_اللوق)
-            if log_chan:
-                embed_log = discord.Embed(title="🎫 رصد فتح تكت جديد", color=discord.Color.orange())
-                embed_log.add_field(name="العضو", value=member.mention, inline=False)
-                embed_log.add_field(name="إجمالي مرات فتح التكتات", value=str(stats["total_tickets_opened"]), inline=True)
-                embed_log.timestamp = datetime.datetime.now()
-                await log_chan.send(embed=embed_log)
-
-        overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),
-            member: discord.PermissionOverwrite(read_messages=True, send_messages=True),
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
-        }
-        
-        ticket_chan = await guild.create_text_channel(name=f"تكت-{member.name}", overwrites=overwrites)
-        view = منيو_تقفيل_التكت(member)
-        embed = discord.Embed(
-            title="مرحباً بك في تكت الدعم",
-            description=f"أهلاً بك يا {member.mention}\nسيتم خدمتك بأسرع وقت ممكن بواسطة الإدارة.\nعند الانتهاء، يستطيع المشرف قفل التكت من الزر بالأسفل.",
-            color=discord.Color.blue()
-        )
-        await ticket_chan.send(embed=embed, view=view)
-        await interaction.response.send_message(f"تم إنشاء تكت الخاص بك بنجاح: {ticket_chan.mention}", ephemeral=True)
 
 # --- 1. النظام التلقائي والترحيب والحماية ---
 @bot.event
@@ -328,84 +153,6 @@ async def ضبط_الاقتراحات(interaction: discord.Interaction, الرو
     رقم_روم_الاقتراحات = الروم.id
     await interaction.response.send_message(f"تم ضبط روم الاقتراحات: {الروم.mention}", ephemeral=True)
 
-# --- زيادة: ضبط أروام ومستويات القطاعات والتكتات ---
-@bot.tree.command(name="ضبط_روم_الترقيات", description="تحديد روم إرسال إعلانات ترقيات الشرطة")
-@app_commands.checks.has_permissions(administrator=True)
-async def ضبط_روم_الترقيات(interaction: discord.Interaction, الروم: discord.TextChannel):
-    global رقم_روم_الترقيات
-    رقم_روم_الترقيات = الروم.id
-    await interaction.response.send_message(f"تم ضبط روم ترقيات الشرطة: {الروم.mention}", ephemeral=True)
-
-@bot.tree.command(name="ضبط_روم_عصابات_الترقيات", description="تحديد روم إرسال إعلانات ترقيات العصابات")
-@app_commands.checks.has_permissions(administrator=True)
-async def ضبط_روم_عصابات_الترقيات(interaction: discord.Interaction, الروم: discord.TextChannel):
-    global رقم_روم_عصابات_الترقيات
-    رقم_روم_عصابات_الترقيات = الروم.id
-    await interaction.response.send_message(f"تم ضبط روم ترقيات العصابات: {الروم.mention}", ephemeral=True)
-
-@bot.tree.command(name="ضبط_روم_الإدارة_الترقيات", description="تحديد روم إرسال إعلانات ترقيات الإدارة")
-@app_commands.checks.has_permissions(administrator=True)
-async def ضبط_روم_الإدارة_الترقيات(interaction: discord.Interaction, الروم: discord.TextChannel):
-    global رقم_روم_الإدارة_الترقيات
-    رقم_روم_الإدارة_الترقيات = الروم.id
-    await interaction.response.send_message(f"تم ضبط روم ترقيات الإدارة: {الروم.mention}", ephemeral=True)
-
-@bot.tree.command(name="تحديد_ترقية_شرطة", description="تحديد عدد الـ XP المطلوب لرتبة شرطة معينة")
-@app_commands.checks.has_permissions(administrator=True)
-async def تحديد_ترقية_شرطة(interaction: discord.Interaction, اسم_الرتبة: str, النقاط_المطلوبة: int):
-    RANKS_XP[اسم_الرتبة] = النقاط_المطلوبة
-    await interaction.response.send_message(f"✅ تم ضبط رتبة الشرطة **{اسم_الرتبة}** لتتطلب **{النقاط_المطلوبة} XP**", ephemeral=True)
-
-@bot.tree.command(name="تحديد_ترقية_عصابة", description="تحديد عدد الـ XP المطلوب لرتبة عصابة معينة")
-@app_commands.checks.has_permissions(administrator=True)
-async def تحديد_ترقية_عصابة(interaction: discord.Interaction, اسم_الرتبة: str, النقاط_المطلوبة: int):
-    GANG_RANKS_XP[اسم_الرتبة] = النقاط_المطلوبة
-    await interaction.response.send_message(f"🏴 تم ضبط رتبة العصابة **{اسم_الرتبة}** لتتطلب **{النقاط_المطلوبة} XP**", ephemeral=True)
-
-@bot.tree.command(name="تحديد_رتبة_إدارة", description="تحديد عدد النقاط الإدارية المطلوبة لرتبة الإدارة")
-@app_commands.checks.has_permissions(administrator=True)
-async def تحديد_رتبة_إدارة(interaction: discord.Interaction, اسم_الرتبة: str, النقاط_المطلوبة: int):
-    ADMIN_RANKS_XP[اسم_الرتبة] = النقاط_المطلوبة
-    await interaction.response.send_message(f"🛡️ تم ضبط رتبة الإدارة **{اسم_الرتبة}** لتتطلب **{النقاط_المطلوبة} نقطة**", ephemeral=True)
-
-@bot.tree.command(name="قبول_تقرير", description="قبول تقرير عسكري وإعطائه XP محدد")
-@app_commands.checks.has_permissions(administrator=True)
-async def قبول_تقرير(interaction: discord.Interaction, العسكري: discord.Member, نقاط_المهمة: int, ملاحظة: str = "تقرير مكتمل"):
-    stats = حساب_النقاط(العسكري.id)
-    stats["xp"] += نقاط_المهمة
-    stats["reports"] += 1
-    embed = discord.Embed(title="👮‍♂️ قبول تقرير عسكري", color=discord.Color.green())
-    embed.add_field(name="العسكري", value=العسكري.mention, inline=False)
-    embed.add_field(name="النقاط المضافة", value=f"+{نقاط_المهمة} XP", inline=True)
-    embed.add_field(name="إجمالي النقاط", value=f"{stats['xp']} XP", inline=True)
-    await interaction.response.send_message(embed=embed)
-    await فحص_الترقية(العسكري)
-
-@bot.tree.command(name="قبول_تقرير_عصابة", description="قبول تقرير عصابة وإعطائه XP محدد")
-@app_commands.checks.has_permissions(administrator=True)
-async def قبول_تقرير_عصابة(interaction: discord.Interaction, العضو: discord.Member, نقاط_المهام: int, ملاحظة: str = "عملية ناجحة"):
-    stats = حساب_النقاط(العضو.id)
-    stats["xp"] += نقاط_المهام
-    stats["gang_reports"] += 1
-    embed = discord.Embed(title="🏴 قبول تقرير عصابة", color=discord.Color.dark_red())
-    embed.add_field(name="العضو", value=العضو.mention, inline=False)
-    embed.add_field(name="النقاط المضافة", value=f"+{نقاط_المهام} XP", inline=True)
-    embed.add_field(name="إجمالي النقاط", value=f"{stats['xp']} XP", inline=True)
-    await interaction.response.send_message(embed=embed)
-    await فحص_ترقية_عصابة(العضو)
-
-@bot.tree.command(name="منيو_التكتات", description="إرسال رسالة منيو فتح التكتات في الشات الحالي")
-@app_commands.checks.has_permissions(administrator=True)
-async def منيو_التكتات(interaction: discord.Interaction):
-    view = منيو_فتح_التكت()
-    embed = discord.Embed(
-        title="🎫 نظام تكتات السيرفر",
-        description="اضغط على الزر بالأسفل لفتح تكت جديد للتواصل مع الإدارة أو طلب مساعدة.",
-        color=discord.Color.purple()
-    )
-    await interaction.channel.send(embed=embed, view=view)
-    await interaction.response.send_message("تم إرسال منيو التكتات بنجاح", ephemeral=True)
-
 @bot.tree.command(name="طلب_تفعيل", description="إرسال طلب تفعيل حسابك للإدارة")
 async def طلب_تفعيل(interaction: discord.Interaction, اسم_الحساب: str):
     if not رقم_روم_اللوق:
@@ -440,19 +187,14 @@ async def كشف_حساب(interaction: discord.Interaction, العضو: discord.
     embed = discord.Embed(title=f"كشف حساب | {target.name}", color=discord.Color.purple())
     embed.add_field(name="المستوى", value=str(stats['level']), inline=True)
     embed.add_field(name="الخبرة XP", value=str(stats['xp']), inline=True)
-    embed.add_field(name="النقاط الإدارية", value=str(stats['admin_xp']), inline=True)
-    embed.add_field(name="تقارير الشرطة المقبولة", value=str(stats['reports']), inline=True)
-    embed.add_field(name="تقارير العصابات المقبولة", value=str(stats['gang_reports']), inline=True)
-    embed.add_field(name="التكتات المحلولة (إداري)", value=str(stats['tickets_solved']), inline=True)
-    embed.add_field(name="التكتات التي فتحها", value=str(stats['total_tickets_opened']), inline=True)
     embed.add_field(name="رصيد البنك", value=f"{stats['bank']} $", inline=True)
     embed.add_field(name="الكاش", value=f"{stats['cash']} $", inline=True)
     await interaction.response.send_message(embed=embed)
 
-    @bot.tree.command(name="بنك", description="عرض رصيدك المالي الحالي")
-    async def bank(interaction: discord.Interaction):
-        stats = get_user_stats(interaction.user.id)
-        await interaction.response.send_message(f"رصيدك في البنك: ${stats['bank']} | الكاش: ${stats['cash']}", ephemeral=True)
+@bot.tree.command(name="بنك", description="عرض رصيدك المالي الحالي")
+async def بنك(interaction: discord.Interaction):
+    stats = حساب_النقاط(interaction.user.id)
+    await interaction.response.send_message(f"رصيدك في البنك: {stats['bank']} $ \vert{} الكاش: {stats['cash']} $", ephemeral=True)
 
 @bot.tree.command(name="راتب", description="استلام الراتب اليومي")
 async def راتب(interaction: discord.Interaction):
@@ -510,17 +252,6 @@ async def صوتي_فتح(interaction: discord.Interaction):
 async def قفل_الشات(interaction: discord.Interaction):
     await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
     await interaction.response.send_message("تم قفل الشات بنجاح", ephemeral=True)
-
-# --- زيادة: أمر قفل الشات المخصص لرتبة معينة ---
-@bot.tree.command(name="قفل_شات_مخصص", description="قفل الشات والسماح لرتبة معينة فقط بالكتابة")
-@app_commands.checks.has_permissions(manage_channels=True)
-async def قفل_شات_مخصص(interaction: discord.Interaction, الرتبة: discord.Role):
-    guild = interaction.guild
-    channel = interaction.channel
-    await channel.set_permissions(guild.default_role, send_messages=False)
-    await channel.set_permissions(الرتبة, send_messages=True)
-    await channel.set_permissions(guild.me, send_messages=True)
-    await interaction.response.send_message(f"🔒 تم قفل الشات. وأصبح مخصصاً للكتابة فقط لـ: {الرتبة.mention}", ephemeral=True)
 
 @bot.tree.command(name="فتح_الشات", description="فتح الشات الحالي للجميع")
 @app_commands.checks.has_permissions(manage_channels=True)
@@ -582,4 +313,4 @@ async def on_ready():
     print(f"تم تسجيل الدخول باسم {bot.user.name} وتم مزامنة كافة أوامر السلاش بنجاح!")
 
 import os
-bot.run(os.environ['TOKEN'])
+bot.run(os.environ['TOKEN’]
