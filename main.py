@@ -1,317 +1,805 @@
-import discord
-from discord.ext import commands
-from discord import app_commands, ui
-import datetime
-import random
+import os
+import sqlite3
 import asyncio
+import discord
+
+from discord.ext import commands
+from discord import app_commands
+
+# ==================================
+# إعدادات البوت
+# ==================================
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+DATABASE = "بيانات_البوت.db"
 
 intents = discord.Intents.default()
-intents.message_content = True
 intents.members = True
-intents.guilds = True
-intents.voice_states = True
+intents.message_content = True
 
-bot = commands.Bot(command_prefix="-", intents=intents)
+bot = commands.Bot(
+    command_prefix="!",
+    intents=intents
+)
 
-# متغيرات الإعدادات العامة
-رقم_روم_اللوق = None  
-رقم_روم_الترحيب = None
-رقم_روم_الاقتراحات = None
-رقم_رتبة_غير_مفعل = None  
-رقم_رتبة_المفعل = None    
+# منع تكرار إنشاء التذاكر بالتزامن
+اقفال_التذاكر = {}
+اقفال_قاعدة_البيانات = asyncio.Lock()
 
-user_data = {}  
 
-def حساب_النقاط(user_id):
-    if user_id not in user_data:
-        user_data[user_id] = {
-            "xp": 0, "level": 1, "bank": 1000, "cash": 500
-        }
-    return user_data[user_id]
+# ==================================
+# قاعدة البيانات
+# ==================================
 
-# --- 1. النظام التلقائي والترحيب والحماية ---
-@bot.event
-async def on_member_join(member):
-    if رقم_رتبة_غير_مفعل:
-        role = member.guild.get_role(رقم_رتبة_غير_مفعل)
-        if role:
-            try:
-                await member.add_roles(role)
-            except Exception:
-                pass
-
-    if رقم_روم_الترحيب:
-        chan = member.guild.get_channel(رقم_روم_الترحيب)
-        if chan:
-            embed = discord.Embed(
-                title="أهلاً بك في السيرفر",
-                description=f"منور يا {member.mention}\nتم منحك رتبة غير مفعل تلقائياً بانتظار التفعيل.",
-                color=discord.Color.purple()
+def تهيئة_قاعدة_البيانات():
+    with sqlite3.connect(DATABASE) as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS التذاكر (
+                معرّف INTEGER PRIMARY KEY AUTOINCREMENT,
+                معرّف_السيرفر INTEGER NOT NULL,
+                معرّف_العضو INTEGER NOT NULL,
+                معرّف_القناة INTEGER UNIQUE,
+                الحالة TEXT NOT NULL DEFAULT 'مفتوحة',
+                UNIQUE (معرّف_السيرفر, معرّف_العضو, الحالة)
             )
-            await chan.send(embed=embed)
+        """)
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS إعدادات_السيرفر (
+                معرّف_السيرفر INTEGER PRIMARY KEY,
+                قناة_السجلات INTEGER,
+                قناة_الترحيب INTEGER,
+                قناة_المغادرة INTEGER,
+                قناة_الاقتراحات INTEGER,
+                قناة_التذاكر INTEGER
+            )
+        """)
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS الخبرة (
+                معرّف_السيرفر INTEGER NOT NULL,
+                معرّف_العضو INTEGER NOT NULL,
+                النقاط INTEGER NOT NULL DEFAULT 0,
+                المستوى INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (معرّف_السيرفر, معرّف_العضو)
+            )
+        """)
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS الأرصدة (
+                معرّف_السيرفر INTEGER NOT NULL,
+                معرّف_العضو INTEGER NOT NULL,
+                الرصيد INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY (معرّف_السيرفر, معرّف_العضو)
+            )
+        """)
+
+        db.commit()
+
+
+# ==================================
+# سجل العمليات
+# ==================================
+
+async def تسجيل_عملية(السيرفر, النص):
+    with sqlite3.connect(DATABASE) as db:
+        نتيجة = db.execute("""
+            SELECT قناة_السجلات
+            FROM إعدادات_السيرفر
+            WHERE معرّف_السيرفر = ?
+        """, (السيرفر.id,)).fetchone()
+
+    if not نتيجة or not نتيجة[0]:
+        return
+
+    القناة = السيرفر.get_channel(نتيجة[0])
+
+    if القناة:
+        try:
+            await القناة.send(
+                f"📋 **سجل العمليات**\n{النص}"
+            )
+        except discord.HTTPException:
+            pass
+
+
+# ==================================
+# تشغيل البوت
+# ==================================
 
 @bot.event
-async def on_message(message):
-    if message.author.bot:
-        return
+async def on_ready():
+    تهيئة_قاعدة_البيانات()
 
-    stats = حساب_النقاط(message.author.id)
-    stats["xp"] += 5
-    if stats["xp"] >= stats["level"] * 100:
-        stats["level"] += 1
+    bot.add_view(لوحة_التذاكر())
 
-    content = message.content.lower()
-    if "discord.gg/" in content or "http://" in content or "https://" in content:
-        await message.delete()
-        await message.channel.send(f"{message.author.mention} ممنوع إرسال الروابط هنا!", delete_after=5)
-        return
+    try:
+        الأوامر = await bot.tree.sync()
+        print(f"تم تحديث {len(الأوامر)} أمر.")
+    except Exception as خطأ:
+        print(f"تعذر تحديث الأوامر: {خطأ}")
 
-    await bot.process_commands(message)
+    print(f"تم تشغيل البوت: {bot.user}")
 
-# --- 2. لوحة تفعيل الأعضاء ---
-class لوحة_التفعيل(ui.View):
-    def __init__(self, member: discord.Member, account_name: str):
-        super().__init__(timeout=None)
-        self.member = member
-        self.account_name = account_name
 
-    @ui.button(label="قبول التفعيل", style=discord.ButtonStyle.success)
-    async def قبول(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("للإدارة فقط", ephemeral=True)
-            return
+# ==================================
+# أمر المساعدة
+# ==================================
 
-        guild = interaction.guild
-        try:
-            if رقم_رتبة_المفعل:
-                v_role = guild.get_role(رقم_رتبة_المفعل)
-                if v_role:
-                    await self.member.add_roles(v_role)
-            if رقم_رتبة_غير_مفعل:
-                un_role = guild.get_role(رقم_رتبة_غير_مفعل)
-                if un_role:
-                    await self.member.remove_roles(un_role)
+@bot.tree.command(
+    name="مساعدة",
+    description="عرض معلومات وأوامر البوت"
+)
+async def مساعدة(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🤖 قائمة أوامر البوت",
+        description=(
+            "🎫 `/إنشاء_لوحة_التذاكر`\n"
+            "📋 `/تحديد_السجلات`\n"
+            "👋 `/تحديد_الترحيب`\n"
+            "💡 `/اقتراح`\n"
+            "💰 `/رصيدي`\n"
+            "🏆 `/مستواي`\n"
+            "📊 `/معلومات_السيرفر`\n"
+            "🔨 `/طرد`\n"
+            "🔇 `/اسكت`\n"
+            "🔊 `/فك_السكوت`\n"
+            "🚫 `/حظر`\n"
+            "📨 `/إرسال_رسالة`\n"
+        ),
+        color=discord.Color.blue()
+    )
 
-            await self.member.edit(nick=f"[RP] {self.account_name}")
-            await interaction.message.edit(view=None)
-            await interaction.response.send_message(f"تم تفعيل العضو {self.member.mention} وتغيير اسمه بنجاح", ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f"حدث خطأ: {e}", ephemeral=True)
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
 
-    @ui.button(label="رفض الطلب", style=discord.ButtonStyle.danger)
-    async def رفض(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("للإدارة فقط", ephemeral=True)
-            return
-        await interaction.message.edit(view=None)
-        await interaction.response.send_message("تم رفض طلب التفعيل", ephemeral=True)
 
-class لوحة_الاقتراح(ui.View):
+# ==================================
+# تحديد قناة السجلات
+# ==================================
+
+@bot.tree.command(
+    name="تحديد_السجلات",
+    description="تحديد قناة تسجيل عمليات البوت"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def تحديد_السجلات(
+    interaction: discord.Interaction,
+    القناة: discord.TextChannel
+):
+    with sqlite3.connect(DATABASE) as db:
+        db.execute("""
+            INSERT INTO إعدادات_السيرفر
+                (معرّف_السيرفر, قناة_السجلات)
+            VALUES (?, ?)
+            ON CONFLICT(معرّف_السيرفر)
+            DO UPDATE SET قناة_السجلات = excluded.قناة_السجلات
+        """, (interaction.guild_id, القناة.id))
+        db.commit()
+
+    await interaction.response.send_message(
+        f"تم تحديد قناة السجلات: {القناة.mention}",
+        ephemeral=True
+    )
+
+
+# ==================================
+# تحديد قناة الترحيب
+# ==================================
+
+@bot.tree.command(
+    name="تحديد_الترحيب",
+    description="تحديد قناة الترحيب بالأعضاء"
+)
+@app_commands.checks.has_permissions(administrator=True)
+async def تحديد_الترحيب(
+    interaction: discord.Interaction,
+    القناة: discord.TextChannel
+):
+    with sqlite3.connect(DATABASE) as db:
+        db.execute("""
+            INSERT INTO إعدادات_السيرفر
+                (معرّف_السيرفر, قناة_الترحيب)
+            VALUES (?, ?)
+            ON CONFLICT(معرّف_السيرفر)
+            DO UPDATE SET قناة_الترحيب = excluded.قناة_الترحيب
+        """, (interaction.guild_id, القناة.id))
+        db.commit()
+
+    await interaction.response.send_message(
+        f"تم تحديد قناة الترحيب: {القناة.mention}",
+        ephemeral=True
+    )
+
+
+@bot.event
+async def on_member_join(العضو):
+    with sqlite3.connect(DATABASE) as db:
+        نتيجة = db.execute("""
+            SELECT قناة_الترحيب
+            FROM إعدادات_السيرفر
+            WHERE معرّف_السيرفر = ?
+        """, (العضو.guild.id,)).fetchone()
+
+    if نتيجة and نتيجة[0]:
+        القناة = العضو.guild.get_channel(نتيجة[0])
+
+        if القناة:
+            await القناة.send(
+                f"🎉 أهلًا وسهلًا {العضو.mention}!\n"
+                f"نورت سيرفر **{العضو.guild.name}**."
+            )
+
+
+# ==================================
+# نظام التذاكر
+# ==================================
+
+class لوحة_التذاكر(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    @ui.button(label="قبول", style=discord.ButtonStyle.success)
-    async def قبول_اقتراح(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
+    @discord.ui.button(
+        label="فتح تذكرة",
+        emoji="🎫",
+        style=discord.ButtonStyle.primary,
+        custom_id="لوحة_التذاكر:فتح"
+    )
+    async def فتح_تذكرة(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if interaction.guild is None:
+            await interaction.response.send_message(
+                "هذا الزر متاح داخل السيرفر فقط.",
+                ephemeral=True
+            )
             return
-        await interaction.message.edit(view=None)
-        await interaction.response.send_message("تم قبول الاقتراح", ephemeral=True)
 
-    @ui.button(label="رفض", style=discord.ButtonStyle.danger)
-    async def رفض_اقتراح(self, interaction: discord.Interaction, button: ui.Button):
-        if not interaction.user.guild_permissions.administrator:
+        await interaction.response.defer(ephemeral=True)
+
+        السيرفر = interaction.guild
+        العضو = interaction.user
+        القفل = اقفال_التذاكر.setdefault(
+            (السيرفر.id, العضو.id),
+            asyncio.Lock()
+        )
+
+        async with القفل:
+            with sqlite3.connect(DATABASE) as db:
+                db.execute("BEGIN IMMEDIATE")
+
+                موجودة = db.execute("""
+                    SELECT معرّف_القناة
+                    FROM التذاكر
+                    WHERE معرّف_السيرفر = ?
+                      AND معرّف_العضو = ?
+                      AND الحالة = 'مفتوحة'
+                """, (السيرفر.id, العضو.id)).fetchone()
+
+                if موجودة:
+                    القناة_القديمة = السيرفر.get_channel(
+                        موجودة[0]
+                    ) if موجودة[0] else None
+
+                    if القناة_القديمة:
+                        db.commit()
+                        await interaction.followup.send(
+                            f"لديك تذكرة مفتوحة بالفعل: "
+                            f"{القناة_القديمة.mention}",
+                            ephemeral=True
+                        )
+                        return
+
+                    # إزالة التذكرة القديمة إذا حذفت قناتها
+                    db.execute("""
+                        UPDATE التذاكر
+                        SET الحالة = 'مغلقة'
+                        WHERE معرّف_السيرفر = ?
+                          AND معرّف_العضو = ?
+                          AND الحالة = 'مفتوحة'
+                    """, (السيرفر.id, العضو.id))
+
+                الفئة = discord.utils.get(
+                    السيرفر.categories,
+                    name="التذاكر"
+                )
+
+                if الفئة is None:
+                    try:
+                        الفئة = await السيرفر.create_category(
+                            "التذاكر",
+                            reason="إنشاء فئة نظام التذاكر"
+                        )
+                    except discord.HTTPException:
+                        db.rollback()
+                        await interaction.followup.send(
+                            "تعذر إنشاء فئة التذاكر. تحقق من صلاحيات البوت.",
+                            ephemeral=True
+                        )
+                        return
+
+                الصلاحيات = {
+                    السيرفر.default_role: discord.PermissionOverwrite(
+                        view_channel=False
+                    ),
+                    العضو: discord.PermissionOverwrite(
+                        view_channel=True,
+                        send_messages=True,
+                        read_message_history=True
+                    ),
+                    السيرفر.me: discord.PermissionOverwrite(
+                        view_channel=True,
+                        send_messages=True,
+                        manage_channels=True,
+                        read_message_history=True
+                    )
+                }
+
+                try:
+                    قناة = await السيرفر.create_text_channel(
+                        name=f"تذكرة-{العضو.id}",
+                        category=الفئة,
+                        overwrites=الصلاحيات,
+                        reason=f"تذكرة دعم للعضو {العضو.id}"
+                    )
+
+                    db.execute("""
+                        INSERT INTO التذاكر (
+                            معرّف_السيرفر,
+                            معرّف_العضو,
+                            معرّف_القناة,
+                            الحالة
+                        ) VALUES (?, ?, ?, 'مفتوحة')
+                    """, (السيرفر.id, العضو.id, قناة.id))
+
+                    db.commit()
+
+                except Exception as خطأ:
+                    db.rollback()
+
+                    # إزالة القناة إذا فشل تسجيلها في قاعدة البيانات
+                    if "قناة" in locals():
+                        try:
+                            await قناة.delete(
+                                reason="فشل حفظ التذكرة في قاعدة البيانات"
+                            )
+                        except discord.HTTPException:
+                            pass
+
+                    print(f"خطأ إنشاء التذكرة: {خطأ}")
+
+                    await interaction.followup.send(
+                        "تعذر إنشاء التذكرة. حاول مرة أخرى.",
+                        ephemeral=True
+                    )
+                    return
+
+            await قناة.send(
+                f"مرحبًا {العضو.mention}، تم فتح تذكرتك.\n"
+                "اشرح مشكلتك وسيتم مساعدتك.",
+                view=أزرار_إغلاق_التذكرة()
+            )
+
+            await تسجيل_عملية(
+                السيرفر,
+                f"فتح تذكرة للعضو {العضو.mention} في {قناة.mention}"
+            )
+
+            await interaction.followup.send(
+                f"تم فتح تذكرتك: {قناة.mention}",
+                ephemeral=True
+            )
+
+
+class أزرار_إغلاق_التذكرة(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(
+        label="إغلاق التذكرة",
+        emoji="🔒",
+        style=discord.ButtonStyle.danger,
+        custom_id="التذاكر:إغلاق"
+    )
+    async def إغلاق_التذكرة(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        if not interaction.user.guild_permissions.manage_channels:
+            await interaction.response.send_message(
+                "ليس لديك صلاحية إغلاق التذاكر.",
+                ephemeral=True
+            )
             return
-        await interaction.message.edit(view=None)
-        await interaction.response.send_message("تم رفض الاقتراح", ephemeral=True)
 
-# --- 3. أوامر السلاش (الإدارة والتفعيل والاقتصاد والرولبلاي) ---
-@bot.tree.command(name="ضبط_رتبة_غير_مفعل", description="تحديد رتبة غير المفعل التلقائية")
+        await interaction.response.defer(ephemeral=True)
+
+        with sqlite3.connect(DATABASE) as db:
+            db.execute("""
+                UPDATE التذاكر
+                SET الحالة = 'مغلقة'
+                WHERE معرّف_القناة = ?
+                  AND معرّف_السيرفر = ?
+                  AND الحالة = 'مفتوحة'
+            """, (interaction.channel_id, interaction.guild_id))
+            db.commit()
+
+        await تسجيل_عملية(
+            interaction.guild,
+            f"إغلاق التذكرة بواسطة {interaction.user.mention}"
+        )
+
+        await interaction.channel.delete(
+            reason=f"إغلاق التذكرة بواسطة {interaction.user}"
+        )
+
+
+@bot.tree.command(
+    name="إنشاء_لوحة_التذاكر",
+    description="إنشاء لوحة فتح التذاكر"
+)
 @app_commands.checks.has_permissions(administrator=True)
-async def ضبط_رتبة_غير_مفعل(interaction: discord.Interaction, آيدي_الرتبة: str):
-    global رقم_رتبة_غير_مفعل
-    رقم_رتبة_غير_مفعل = int(آيدي_الرتبة)
-    await interaction.response.send_message(f"تم ضبط رتبة غير المفعل برقم: {آيدي_الرتبة}", ephemeral=True)
-
-@bot.tree.command(name="ضبط_رتبة_المفعل", description="تحديد رتبة المفعل عند القبول")
-@app_commands.checks.has_permissions(administrator=True)
-async def ضبط_رتبة_المفعل(interaction: discord.Interaction, آيدي_الرتبة: str):
-    global رقم_رتبة_المفعل
-    رقم_رتبة_المفعل = int(آيدي_الرتبة)
-    await interaction.response.send_message(f"تم ضبط رتبة المفعل برقم: {آيدي_الرتبة}", ephemeral=True)
-
-@bot.tree.command(name="ضبط_اللوق", description="تحديد روم السجلات واللوق")
-@app_commands.checks.has_permissions(administrator=True)
-async def ضبط_اللوق(interaction: discord.Interaction, الروم: discord.TextChannel):
-    global رقم_روم_اللوق
-    رقم_روم_اللوق = الروم.id
-    await interaction.response.send_message(f"تم ضبط روم اللوق: {الروم.mention}", ephemeral=True)
-
-@bot.tree.command(name="ضبط_الاقتراحات", description="تحديد روم الاقتراحات")
-@app_commands.checks.has_permissions(administrator=True)
-async def ضبط_الاقتراحات(interaction: discord.Interaction, الروم: discord.TextChannel):
-    global رقم_روم_الاقتراحات
-    رقم_روم_الاقتراحات = الروم.id
-    await interaction.response.send_message(f"تم ضبط روم الاقتراحات: {الروم.mention}", ephemeral=True)
-
-@bot.tree.command(name="طلب_تفعيل", description="إرسال طلب تفعيل حسابك للإدارة")
-async def طلب_تفعيل(interaction: discord.Interaction, اسم_الحساب: str):
-    if not رقم_روم_اللوق:
-        await interaction.response.send_message("لم يتم تحديد روم اللوق بعد", ephemeral=True)
-        return
-    log_chan = interaction.guild.get_channel(رقم_روم_اللوق)
-    if log_chan:
-        embed = discord.Embed(title="طلب تفعيل جديد", color=discord.Color.gold())
-        embed.add_field(name="العضو", value=interaction.user.mention, inline=False)
-        embed.add_field(name="اسم الحساب", value=اسم_الحساب, inline=False)
-        view = لوحة_التفعيل(interaction.user, اسم_الحساب)
-        await log_chan.send(embed=embed, view=view)
-        await interaction.response.send_message("تم إرسال طلب التفعيل بنجاح", ephemeral=True)
-
-@bot.tree.command(name="اقتراح", description="إرسال اقتراح جديد لتطوير السيرفر")
-async def اقتراح(interaction: discord.Interaction, النص: str):
-    if not رقم_روم_الاقتراحات:
-        await interaction.response.send_message("لم يتم تحديد روم الاقتراحات بعد", ephemeral=True)
-        return
-    sug_chan = interaction.guild.get_channel(رقم_روم_الاقتراحات)
-    if sug_chan:
-        embed = discord.Embed(title="اقتراح جديد", description=النص, color=discord.Color.blue())
-        embed.set_author(name=interaction.user.name, icon_url=interaction.user.display_avatar.url)
-        view = لوحة_الاقتراح()
-        await sug_chan.send(embed=embed, view=view)
-        await interaction.response.send_message("تم إرسال اقتراحك بنجاح", ephemeral=True)
-
-@bot.tree.command(name="كشف_حساب", description="عرض إحصائيات البروفايل والأموال")
-async def كشف_حساب(interaction: discord.Interaction, العضو: discord.Member = None):
-    target = العضو or interaction.user
-    stats = حساب_النقاط(target.id)
-    embed = discord.Embed(title=f"كشف حساب | {target.name}", color=discord.Color.purple())
-    embed.add_field(name="المستوى", value=str(stats['level']), inline=True)
-    embed.add_field(name="الخبرة XP", value=str(stats['xp']), inline=True)
-    embed.add_field(name="رصيد البنك", value=f"{stats['bank']} $", inline=True)
-    embed.add_field(name="الكاش", value=f"{stats['cash']} $", inline=True)
-    await interaction.response.send_message(embed=embed)
-
-@bot.tree.command(name="بنك", description="عرض رصيدك المالي الحالي")
-async def بنك(interaction: discord.Interaction):
-    stats = حساب_النقاط(interaction.user.id)
-    await interaction.response.send_message(f"رصيدك في البنك: {stats['bank']} $ | الكاش: {stats['cash']} $", ephemeral=True)
+async def إنشاء_لوحة_التذاكر(
+    interaction: discord.Interaction
+):
+    await interaction.response.send_message(
+        "🎫 **الدعم الفني**\nاضغط على الزر لفتح تذكرة.",
+        view=لوحة_التذاكر()
+    )
 
 
-@bot.tree.command(name="راتب", description="استلام الراتب اليومي")
-async def راتب(interaction: discord.Interaction):
-    stats = حساب_النقاط(interaction.user.id)
-    stats['cash'] += 200
-    await interaction.response.send_message("تم استلام راتبك اليومي بقيمة 200 $ بنجاح!", ephemeral=True)
+# ==================================
+# نظام الاقتراحات
+# ==================================
 
-@bot.tree.command(name="تحويل", description="تحويل أموال لعضو آخر")
-async def تحويل(interaction: discord.Interaction, العضو: discord.Member, المبلغ: int):
-    stats_sender = حساب_النقاط(interaction.user.id)
-    stats_receiver = حساب_النقاط(العضو.id)
-    if stats_sender['cash'] < المبلغ:
-        await interaction.response.send_message("ليس لديك ما يكفي من الكاش!", ephemeral=True)
-        return
-    stats_sender['cash'] -= المبلغ
-    stats_receiver['cash'] += المبلغ
-    await interaction.response.send_message(f"تم تحويل {المبلغ} $ إلى {العضو.mention} بنجاح", ephemeral=True)
+@bot.tree.command(
+    name="اقتراح",
+    description="إرسال اقتراح لإدارة السيرفر"
+)
+@app_commands.describe(النص="اكتب اقتراحك")
+async def اقتراح(
+    interaction: discord.Interaction,
+    النص: str
+):
+    embed = discord.Embed(
+        title="💡 اقتراح جديد",
+        description=النص,
+        color=discord.Color.green()
+    )
 
-@bot.tree.command(name="هوية", description="عرض بطاقة الهوية الخاصة بالشخصية")
-async def هوية(interaction: discord.Interaction, العضو: discord.Member = None):
-    target = العضو or interaction.user
-    embed = discord.Embed(title=f"بطاقة هوية الرولبلاي | {target.name}", description="رتبة حكومية / مدنية معتمدة", color=discord.Color.gold())
-    embed.add_field(name="الحالة", value="مفعل ومسجل", inline=True)
-    await interaction.response.send_message(embed=embed)
+    embed.set_footer(
+        text=f"مقدم الاقتراح: {interaction.user}"
+    )
 
-@bot.tree.command(name="بلاغ_شرطة", description="إرسال بلاغ أمني عاجل للجهات المختصة")
-async def بلاغ_شرطة(interaction: discord.Interaction, البلاغ: str):
-    await interaction.response.send_message(f"تم إرسال بلاغك الأمني بنجاح: {البلاغ}", ephemeral=True)
+    await interaction.response.send_message(
+        "تم إرسال اقتراحك.",
+        ephemeral=True
+    )
 
-@bot.tree.command(name="صوتي_انشاء", description="إنشاء روم صوتي خاص بك")
-async def صوتي_انشاء(interaction: discord.Interaction):
-    guild = interaction.guild
-    overwrites = {guild.default_role: discord.PermissionOverwrite(connect=True), interaction.user: discord.PermissionOverwrite(manage_channel=True)}
-    chan = await guild.create_voice_channel(name=f"روم {interaction.user.name}", overwrites=overwrites)
-    await interaction.response.send_message(f"تم إنشاء رومك الصوتي: {chan.mention}", ephemeral=True)
+    await interaction.channel.send(embed=embed)
 
-@bot.tree.command(name="صوتي_قفل", description="قفل رومك الصوتي الحالي")
-async def صوتي_قفل(interaction: discord.Interaction):
-    if interaction.user.voice and interaction.user.voice.channel:
-        await interaction.user.voice.channel.set_permissions(interaction.guild.default_role, connect=False)
-        await interaction.response.send_message("تم قفل رومك الصوتي", ephemeral=True)
-    else:
-        await interaction.response.send_message("لست في روم صوتي حالياً", ephemeral=True)
 
-@bot.tree.command(name="صوتي_فتح", description="فتح رومك الصوتي للجميع")
-async def صوتي_فتح(interaction: discord.Interaction):
-    if interaction.user.voice and interaction.user.voice.channel:
-        await interaction.user.voice.channel.set_permissions(interaction.guild.default_role, connect=True)
-        await interaction.response.send_message("تم فتح رومك الصوتي", ephemeral=True)
-    else:
-        await interaction.response.send_message("لست في روم صوتي حالياً", ephemeral=True)
+# ==================================
+# نظام الخبرة والمستويات
+# ==================================
 
-@bot.tree.command(name="قفل_الشات", description="إغلاق الشات الحالي عن الجميع")
-@app_commands.checks.has_permissions(manage_channels=True)
-async def قفل_الشات(interaction: discord.Interaction):
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=False)
-    await interaction.response.send_message("تم قفل الشات بنجاح", ephemeral=True)
-
-@bot.tree.command(name="فتح_الشات", description="فتح الشات الحالي للجميع")
-@app_commands.checks.has_permissions(manage_channels=True)
-async def فتح_الشات(interaction: discord.Interaction):
-    await interaction.channel.set_permissions(interaction.guild.default_role, send_messages=True)
-    await interaction.response.send_message("تم فتح الشات بنجاح", ephemeral=True)
-
-@bot.tree.command(name="مسح", description="مسح وحذف رسائل الشات")
-@app_commands.checks.has_permissions(manage_messages=True)
-async def مسح(interaction: discord.Interaction, العدد: int):
-    await interaction.channel.purge(limit=العدد)
-    await interaction.response.send_message(f"تم مسح {العدد} رسالة بنجاح", ephemeral=True)
-
-@bot.tree.command(name="اسكت", description="إعطاء تايم أوت لعضو مخالف")
-@app_commands.checks.has_permissions(moderate_members=True)
-async def اسكت(interaction: discord.Interaction, العضو: discord.Member, الدقائق: int, السبب: str = "مخالفة"):
-    await العضو.timeout(datetime.timedelta(minutes=الدقائق), reason=السبب)
-    await interaction.response.send_message(f"تم إسكات العضو {العضو.mention} لمدة {الدقائق} دقائق بسبب: {السبب}", ephemeral=True)
-
-@bot.tree.command(name="باند", description="حظر عضو نهائياً من السيرفر")
-@app_commands.checks.has_permissions(ban_members=True)
-async def باند(interaction: discord.Interaction, العضو: discord.Member, السبب: str = "مخالفة جسيمة"):
-    await العضو.ban(reason=السبب)
-    await interaction.response.send_message(f"تم حظر العضو {العضو.mention} نهائياً.", ephemeral=True)
-
-@bot.tree.command(name="قول", description="إرسال رسالة موجهة باسم البوت")
-@app_commands.checks.has_permissions(administrator=True)
-async def قول(interaction: discord.Interaction, النص: str):
-    await interaction.channel.send(النص)
-    await interaction.response.send_message("تم إرسال الرسالة", ephemeral=True)
-
-# --- 4. ألعاب البادئة ---
-@bot.command(name="لعب")
-async def لعب(ctx):
-    قائمة = "• `-مافيا` : لعبة المافيا\n• `-عكس` : لعبة العكس\n• `-فكك` : فكك الكلمات\n• `-سرعة` : اختبار السرعة"
-    embed = discord.Embed(title="قائمة الألعاب والفعاليات", description=قائمة, color=discord.Color.green())
-    await ctx.send(embed=embed)
-
-@bot.command(name="مافيا")
-async def مافيا(ctx):
-    await ctx.send("بدأت لعبة المافيا التفاعلية!")
-
-@bot.command(name="عكس")
-async def عكس(ctx):
-    await ctx.send(f"لعبة العكس: أسرع واحد يكتب اسم السيرفر: {ctx.guild.name}")
-
-@bot.command(name="فكك")
-async def فكك(ctx):
-    await ctx.send("لعبة فكك الكلمات: جاري تحضير الكلمة...")
-
-@bot.command(name="سرعة")
-async def سرعة(ctx):
-    await ctx.send("اختبار سرعة الكتابة بدأ!")
-
-# --- 5. تشغيل البوت ---
 @bot.event
-async def on_ready():
-    await bot.tree.sync()
-    print(f"تم تسجيل الدخول باسم {bot.user.name} وتم مزامنة كافة أوامر السلاش بنجاح!")
+async def on_message(الرسالة):
+    if الرسالة.author.bot or not الرسالة.guild:
+        return
 
-import os
-bot.run(os.environ['TOKEN'])
+    with sqlite3.connect(DATABASE) as db:
+        db.execute("""
+            INSERT INTO الخبرة (
+                معرّف_السيرفر,
+                معرّف_العضو,
+                النقاط,
+                المستوى
+            ) VALUES (?, ?, 5, 1)
+            ON CONFLICT(معرّف_السيرفر, معرّف_العضو)
+            DO UPDATE SET النقاط = النقاط + 5
+        """, (الرسالة.guild.id, الرسالة.author.id))
+
+        نتيجة = db.execute("""
+            SELECT النقاط, المستوى
+            FROM الخبرة
+            WHERE معرّف_السيرفر = ?
+              AND معرّف_العضو = ?
+        """, (الرسالة.guild.id, الرسالة.author.id)).fetchone()
+
+        النقاط, المستوى = نتيجة
+
+        المستوى_الجديد = (النقاط // 100) + 1
+
+        if المستوى_الجديد > المستوى:
+            db.execute("""
+                UPDATE الخبرة
+                SET المستوى = ?
+                WHERE معرّف_السيرفر = ?
+                  AND معرّف_العضو = ?
+            """, (
+                المستوى_الجديد,
+                الرسالة.guild.id,
+                الرسالة.author.id
+            ))
+
+        db.commit()
+
+    await bot.process_commands(الرسالة)
+
+
+@bot.tree.command(
+    name="مستواي",
+    description="عرض مستواك ونقاط خبرتك"
+)
+async def مستواي(interaction: discord.Interaction):
+    with sqlite3.connect(DATABASE) as db:
+        نتيجة = db.execute("""
+            SELECT النقاط, المستوى
+            FROM الخبرة
+            WHERE معرّف_السيرفر = ?
+              AND معرّف_العضو = ?
+        """, (interaction.guild_id, interaction.user.id)).fetchone()
+
+    if نتيجة is None:
+        النقاط, المستوى = 0, 1
+    else:
+        النقاط, المستوى = نتيجة
+
+    await interaction.response.send_message(
+        f"🏆 مستواك: {المستوى}\n"
+        f"✨ نقاط الخبرة: {النقاط}",
+        ephemeral=True
+    )
+
+
+# ==================================
+# نظام الاقتصاد
+# ==================================
+
+@bot.tree.command(
+    name="رصيدي",
+    description="عرض رصيدك المالي"
+)
+async def رصيدي(interaction: discord.Interaction):
+    with sqlite3.connect(DATABASE) as db:
+        db.execute("""
+            INSERT OR IGNORE INTO الأرصدة (
+                معرّف_السيرفر,
+                معرّف_العضو,
+                الرصيد
+            ) VALUES (?, ?, 0)
+        """, (interaction.guild_id, interaction.user.id))
+
+        نتيجة = db.execute("""
+            SELECT الرصيد FROM الأرصدة
+            WHERE معرّف_السيرفر = ?
+              AND معرّف_العضو = ?
+        """, (interaction.guild_id, interaction.user.id)).fetchone()
+
+        db.commit()
+
+    await interaction.response.send_message(
+        f"💰 رصيدك الحالي: {نتيجة[0]} عملة",
+        ephemeral=True
+    )
+
+
+# ==================================
+# أوامر الإدارة
+# ==================================
+
+@bot.tree.command(
+    name="طرد",
+    description="طرد عضو من السيرفر"
+)
+@app_commands.checks.has_permissions(kick_members=True)
+async def طرد(
+    interaction: discord.Interaction,
+    العضو: discord.Member,
+    السبب: str = "لم يتم تحديد سبب"
+):
+    if العضو.id == interaction.user.id:
+        await interaction.response.send_message(
+            "لا يمكنك طرد نفسك.",
+            ephemeral=True
+        )
+        return
+
+    if العضو.top_role >= interaction.user.top_role:
+        await interaction.response.send_message(
+            "لا يمكنك طرد عضو رتبته مساوية لرتبتك أو أعلى منها.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        await العضو.kick(
+            reason=f"{السبب} | بواسطة {interaction.user}"
+        )
+
+        await interaction.response.send_message(
+            f"تم طرد {العضو.mention}.\nالسبب: {السبب}"
+        )
+
+        await تسجيل_عملية(
+            interaction.guild,
+            f"طرد {العضو} بواسطة {interaction.user}. السبب: {السبب}"
+        )
+
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            "البوت لا يملك صلاحية طرد هذا العضو.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
+    name="اسكت",
+    description="إسكات عضو لمدة محددة بالدقائق"
+)
+@app_commands.checks.has_permissions(moderate_members=True)
+async def اسكت(
+    interaction: discord.Interaction,
+    العضو: discord.Member,
+    الدقائق: app_commands.Range[int, 1, 40320],
+    السبب: str = "لم يتم تحديد سبب"
+):
+    if العضو.top_role >= interaction.user.top_role:
+        await interaction.response.send_message(
+            "لا يمكنك معاقبة عضو رتبته مساوية لرتبتك أو أعلى منها.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        await العضو.timeout(
+            discord.utils.utcnow() + discord.timedelta(
+                minutes=الدقائق
+            ),
+            reason=السبب
+        )
+
+        await interaction.response.send_message(
+            f"تم إسكات {العضو.mention} لمدة {الدقائق} دقيقة.\n"
+            f"السبب: {السبب}"
+        )
+
+        await تسجيل_عملية(
+            interaction.guild,
+            f"إسكات {العضو} لمدة {الدقائق} دقيقة. السبب: {السبب}"
+        )
+
+    except (discord.Forbidden, discord.HTTPException):
+        await interaction.response.send_message(
+            "تعذر إسكات العضو. تحقق من صلاحيات البوت والرتب.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
+    name="فك_السكوت",
+    description="إزالة الإسكات عن عضو"
+)
+@app_commands.checks.has_permissions(moderate_members=True)
+async def فك_السكوت(
+    interaction: discord.Interaction,
+    العضو: discord.Member
+):
+    try:
+        await العضو.timeout(None)
+
+        await interaction.response.send_message(
+            f"تم فك الإسكات عن {العضو.mention}."
+        )
+
+    except discord.HTTPException:
+        await interaction.response.send_message(
+            "تعذر فك الإسكات.",
+            ephemeral=True
+        )
+
+
+@bot.tree.command(
+    name="حظر",
+    description="حظر عضو من السيرفر"
+)
+@app_commands.checks.has_permissions(ban_members=True)
+async def حظر(
+    interaction: discord.Interaction,
+    العضو: discord.Member,
+    السبب: str = "لم يتم تحديد سبب"
+):
+    if العضو.id == interaction.user.id:
+        await interaction.response.send_message(
+            "لا يمكنك حظر نفسك.",
+            ephemeral=True
+        )
+        return
+
+    if العضو.top_role >= interaction.user.top_role:
+        await interaction.response.send_message(
+            "لا يمكنك حظر عضو رتبته مساوية لرتبتك أو أعلى منها.",
+            ephemeral=True
+        )
+        return
+
+    try:
+        await العضو.ban(
+            reason=f"{السبب} | بواسطة {interaction.user}"
+        )
+
+        await interaction.response.send_message(
+            f"🚫 تم حظر {العضو} من السيرفر.\n"
+            f"السبب: {السبب}\n"
+            "السيرفر ما وقف على أحد."
+        )
+
+        await تسجيل_عملية(
+            interaction.guild,
+            f"حظر {العضو} بواسطة {interaction.user}. السبب: {السبب}"
+        )
+
+    except discord.HTTPException:
+        await interaction.response.send_message(
+            "تعذر حظر العضو.",
+            ephemeral=True
+        )
+
+
+# ==================================
+# معلومات السيرفر
+# ==================================
+
+@bot.tree.command(
+    name="معلومات_السيرفر",
+    description="عرض معلومات السيرفر"
+)
+async def معلومات_السيرفر(interaction: discord.Interaction):
+    السيرفر = interaction.guild
+
+    embed = discord.Embed(
+        title=f"معلومات {السيرفر.name}",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="عدد الأعضاء",
+        value=str(sيرفر_عدد_الأعضاء(السيرفر)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="عدد القنوات",
+        value=str(len(السيرفر.channels)),
+        inline=True
+    )
+
+    embed.add_field(
+        name="عدد الرتب",
+        value=str(len(السيرفر.roles)),
+        inline=True
+    )
+
+    await interaction.response.send_message(embed=embed)
+
+
+def سيرفر_عدد_الأعضاء(السيرفر):
+    return السيرفر.member_count or len(السيرفر.members)
+
+
+# ==================================
+# تشغيل البرنامج
+# ==================================
+
+if not TOKEN:
+    raise RuntimeError(
+        "أضف توكن البوت في متغير البيئة DISCORD_TOKEN."
+    )
+
+bot.run(TOKEN)
