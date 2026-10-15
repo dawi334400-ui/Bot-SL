@@ -581,5 +581,5 @@ async def on_ready():
     await bot.tree.sync()
     print(f"تم تسجيل الدخول باسم {bot.user.name} وتم مزامنة كافة أوامر السلاش بنجاح!")
 
-# import os
-# bot.run(os.environ['MTU1MzAwOTMzNzAxNzA0MDk5Ng.GVn_1I.XTLD9FnGcRTtdr9oUqhI3OdpoEjwlfy3aHN64Q'])
+import os
+bot.run(os.environ['TOKEN'])
