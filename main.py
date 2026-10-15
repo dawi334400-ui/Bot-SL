@@ -536,7 +536,7 @@ async def كشف_حساب(interaction: discord.Interaction, العضو: discord.
 @bot.tree.command(name="بنك", description="عرض رصيدك المالي الحالي")
 async def بنك(interaction: discord.Interaction):
     stats = حساب_النقاط(interaction.user.id)
-    await interaction.response.send_message(f"رصيدك في البنك: {stats['bank']} $ \vert{} الكاش: {stats['cash']} $", ephemeral=True)
+    await interaction.response.send_message(f"رصيدك في البنك: {stats['bank']} $ | الكاش: {stats['cash']} $", ephemeral=True)
 
 @bot.tree.command(name="راتب", description="استلام الراتب اليومي")
 async def راتب(interaction: discord.Interaction):
@@ -571,7 +571,7 @@ async def بلاغ_شرطة(interaction: discord.Interaction, البلاغ: str)
 @bot.tree.command(name="صوتي_انشاء", description="إنشاء روم صوتي خاص بك")
 async def صوتي_انشاء(interaction: discord.Interaction):
     guild = interaction.guild
-    overwrites = {guild.default_role: discord.PermissionOverwrite(connect=True), interaction.user: discord.PermissionOverwrite(manage_channel=True)}
+    overwrites = {guild.default_role: discord.PermissionOverwrite(connect=True), interaction.user: discord.PermissionOverwrite(connect=True, manage_channels=True)}
     chan = await guild.create_voice_channel(name=f"روم {interaction.user.name}", overwrites=overwrites)
     await interaction.response.send_message(f"تم إنشاء رومك الصوتي: {chan.mention}", ephemeral=True)
 
