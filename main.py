@@ -313,4 +313,4 @@ async def on_ready():
     print(f"تم تسجيل الدخول باسم {bot.user.name} وتم مزامنة كافة أوامر السلاش بنجاح!")
 
 import os
-bot.run(os.environ['TOKEN’]
+bot.run(os.environ['TOKEN'])
