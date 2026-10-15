@@ -194,7 +194,8 @@ async def كشف_حساب(interaction: discord.Interaction, العضو: discord.
 @bot.tree.command(name="بنك", description="عرض رصيدك المالي الحالي")
 async def بنك(interaction: discord.Interaction):
     stats = حساب_النقاط(interaction.user.id)
-    await interaction.response.send_message(f"رصيدك في البنك: {stats['bank']} $ \vert{} الكاش: {stats['cash']} $", ephemeral=True)
+    await interaction.response.send_message(f"رصيدك في البنك: {stats['bank']} $ | الكاش: {stats['cash']} $", ephemeral=True)
+
 
 @bot.tree.command(name="راتب", description="استلام الراتب اليومي")
 async def راتب(interaction: discord.Interaction):
