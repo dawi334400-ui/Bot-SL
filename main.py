@@ -145,7 +145,6 @@ async def مساعدة(interaction: discord.Interaction):
             "🔇 `/اسكت`\n"
             "🔊 `/فك_السكوت`\n"
             "🚫 `/حظر`\n"
-            "📨 `/إرسال_رسالة`\n"
         ),
         color=discord.Color.blue()
     )
@@ -294,7 +293,6 @@ class لوحة_التذاكر(discord.ui.View):
                         )
                         return
 
-                    # إزالة التذكرة القديمة إذا حذفت قناتها
                     db.execute("""
                         UPDATE التذاكر
                         SET الحالة = 'مغلقة'
@@ -361,7 +359,6 @@ class لوحة_التذاكر(discord.ui.View):
                 except Exception as خطأ:
                     db.rollback()
 
-                    # إزالة القناة إذا فشل تسجيلها في قاعدة البيانات
                     if "قناة" in locals():
                         try:
                             await قناة.delete(
@@ -756,6 +753,10 @@ async def حظر(
 # معلومات السيرفر
 # ==================================
 
+def حساب_عدد_الأعضاء(السيرفر):
+    return السيرفر.member_count or len(السيرفر.members)
+
+
 @bot.tree.command(
     name="معلومات_السيرفر",
     description="عرض معلومات السيرفر"
@@ -770,7 +771,7 @@ async def معلومات_السيرفر(interaction: discord.Interaction):
 
     embed.add_field(
         name="عدد الأعضاء",
-        value=str(sيرفر_عدد_الأعضاء(السيرفر)),
+        value=str(حساب_عدد_الأعضاء(السيرفر)),
         inline=True
     )
 
@@ -787,10 +788,6 @@ async def معلومات_السيرفر(interaction: discord.Interaction):
     )
 
     await interaction.response.send_message(embed=embed)
-
-
-def سيرفر_عدد_الأعضاء(السيرفر):
-    return السيرفر.member_count or len(السيرفر.members)
 
 
 # ==================================
