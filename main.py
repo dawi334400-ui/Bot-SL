@@ -4,6 +4,9 @@ from discord import app_commands, ui
 import datetime
 import random
 import asyncio
+import json, os
+
+DATA_FILE = os.path.join(os.environ.get("DATA_DIR", "/data"), "bot_state.json")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -28,13 +31,79 @@ RANKS_XP = {}         # زيادة: رتب ونقاط الشرطة
 GANG_RANKS_XP = {}    # زيادة: رتب ونقاط العصابات
 ADMIN_RANKS_XP = {}   # زيادة: رتب ونقاط الإدارة
 
+DEFAULT_USER_STATS = {
+    "xp": 0, "level": 1, "bank": 1000, "cash": 500,
+    "reports": 0, "gang_reports": 0, "tickets_solved": 0,
+    "admin_xp": 0, "total_tickets_opened": 0
+}
+
+def save_state():
+    try:
+        state = {
+            "رقم_روم_اللوق": رقم_روم_اللوق,
+            "رقم_روم_الترحيب": رقم_روم_الترحيب,
+            "رقم_روم_الاقتراحات": رقم_روم_الاقتراحات,
+            "رقم_روم_الترقيات": رقم_روم_الترقيات,
+            "رقم_روم_عصابات_الترقيات": رقم_روم_عصابات_الترقيات,
+            "رقم_روم_الإدارة_الترقيات": رقم_روم_الإدارة_الترقيات,
+            "رقم_رتبة_غير_مفعل": رقم_رتبة_غير_مفعل,
+            "رقم_رتبة_المفعل": رقم_رتبة_المفعل,
+            "user_data": {str(uid): stats for uid, stats in user_data.items()},
+            "RANKS_XP": RANKS_XP,
+            "GANG_RANKS_XP": GANG_RANKS_XP,
+            "ADMIN_RANKS_XP": ADMIN_RANKS_XP,
+        }
+        os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
+        tmp_file = DATA_FILE + ".tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(state, f, ensure_ascii=False)
+        os.replace(tmp_file, DATA_FILE)
+    except Exception as e:
+        print(f"فشل حفظ البيانات: {e}")
+
+def load_state():
+    global رقم_روم_اللوق, رقم_روم_الترحيب, رقم_روم_الاقتراحات, رقم_روم_الترقيات
+    global رقم_روم_عصابات_الترقيات, رقم_روم_الإدارة_الترقيات
+    global رقم_رتبة_غير_مفعل, رقم_رتبة_المفعل
+    global user_data, RANKS_XP, GANG_RANKS_XP, ADMIN_RANKS_XP
+    if not os.path.exists(DATA_FILE):
+        return
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            state = json.load(f)
+
+        def as_id(value):
+            return int(value) if value is not None else None
+
+        def as_ranks(value):
+            return {str(k): int(v) for k, v in (value or {}).items()}
+
+        رقم_روم_اللوق = as_id(state.get("رقم_روم_اللوق"))
+        رقم_روم_الترحيب = as_id(state.get("رقم_روم_الترحيب"))
+        رقم_روم_الاقتراحات = as_id(state.get("رقم_روم_الاقتراحات"))
+        رقم_روم_الترقيات = as_id(state.get("رقم_روم_الترقيات"))
+        رقم_روم_عصابات_الترقيات = as_id(state.get("رقم_روم_عصابات_الترقيات"))
+        رقم_روم_الإدارة_الترقيات = as_id(state.get("رقم_روم_الإدارة_الترقيات"))
+        رقم_رتبة_غير_مفعل = as_id(state.get("رقم_رتبة_غير_مفعل"))
+        رقم_رتبة_المفعل = as_id(state.get("رقم_رتبة_المفعل"))
+
+        loaded_users = {}
+        for uid, stats in (state.get("user_data") or {}).items():
+            merged = dict(DEFAULT_USER_STATS)
+            merged.update({k: int(v) for k, v in stats.items()})
+            loaded_users[int(uid)] = merged
+        user_data = loaded_users
+
+        RANKS_XP = as_ranks(state.get("RANKS_XP"))
+        GANG_RANKS_XP = as_ranks(state.get("GANG_RANKS_XP"))
+        ADMIN_RANKS_XP = as_ranks(state.get("ADMIN_RANKS_XP"))
+    except Exception as e:
+        print(f"فشل تحميل البيانات: {e}")
+
 def حساب_النقاط(user_id):
     if user_id not in user_data:
-        user_data[user_id] = {
-            "xp": 0, "level": 1, "bank": 1000, "cash": 500,
-            "reports": 0, "gang_reports": 0, "tickets_solved": 0, 
-            "admin_xp": 0, "total_tickets_opened": 0
-        }
+        user_data[user_id] = dict(DEFAULT_USER_STATS)
+        save_state()
     return user_data[user_id]
 
 # --- زيادة: فحوصات الترقيات التلقائية للقطاعات ---
@@ -114,6 +183,7 @@ class تقييم_التكت_View(ui.View):
         stats = حساب_النقاط(self.admin_member.id)
         stats["admin_xp"] += stars
         stats["tickets_solved"] += 1
+        save_state()
         
         embed = discord.Embed(
             title="⭐ تم تقييم خدمة الإداري بنجاح",
@@ -178,6 +248,7 @@ class منيو_فتح_التكت(ui.View):
         
         stats = حساب_النقاط(member.id)
         stats["total_tickets_opened"] += 1
+        save_state()
 
         if رقم_روم_اللوق:
             log_chan = guild.get_channel(رقم_روم_اللوق)
@@ -234,6 +305,7 @@ async def on_message(message):
     stats["xp"] += 5
     if stats["xp"] >= stats["level"] * 100:
         stats["level"] += 1
+    save_state()
 
     content = message.content.lower()
     if "discord.gg/" in content or "http://" in content or "https://" in content:
@@ -305,6 +377,7 @@ class لوحة_الاقتراح(ui.View):
 async def ضبط_رتبة_غير_مفعل(interaction: discord.Interaction, آيدي_الرتبة: str):
     global رقم_رتبة_غير_مفعل
     رقم_رتبة_غير_مفعل = int(آيدي_الرتبة)
+    save_state()
     await interaction.response.send_message(f"تم ضبط رتبة غير المفعل برقم: {آيدي_الرتبة}", ephemeral=True)
 
 @bot.tree.command(name="ضبط_رتبة_المفعل", description="تحديد رتبة المفعل عند القبول")
@@ -312,6 +385,7 @@ async def ضبط_رتبة_غير_مفعل(interaction: discord.Interaction, آي
 async def ضبط_رتبة_المفعل(interaction: discord.Interaction, آيدي_الرتبة: str):
     global رقم_رتبة_المفعل
     رقم_رتبة_المفعل = int(آيدي_الرتبة)
+    save_state()
     await interaction.response.send_message(f"تم ضبط رتبة المفعل برقم: {آيدي_الرتبة}", ephemeral=True)
 
 @bot.tree.command(name="ضبط_اللوق", description="تحديد روم السجلات واللوق")
@@ -319,6 +393,7 @@ async def ضبط_رتبة_المفعل(interaction: discord.Interaction, آيد�
 async def ضبط_اللوق(interaction: discord.Interaction, الروم: discord.TextChannel):
     global رقم_روم_اللوق
     رقم_روم_اللوق = الروم.id
+    save_state()
     await interaction.response.send_message(f"تم ضبط روم اللوق: {الروم.mention}", ephemeral=True)
 
 @bot.tree.command(name="ضبط_الاقتراحات", description="تحديد روم الاقتراحات")
@@ -326,6 +401,7 @@ async def ضبط_اللوق(interaction: discord.Interaction, الروم: discor
 async def ضبط_الاقتراحات(interaction: discord.Interaction, الروم: discord.TextChannel):
     global رقم_روم_الاقتراحات
     رقم_روم_الاقتراحات = الروم.id
+    save_state()
     await interaction.response.send_message(f"تم ضبط روم الاقتراحات: {الروم.mention}", ephemeral=True)
 
 # --- زيادة: ضبط أروام ومستويات القطاعات والتكتات ---
@@ -334,6 +410,7 @@ async def ضبط_الاقتراحات(interaction: discord.Interaction, الرو
 async def ضبط_روم_الترقيات(interaction: discord.Interaction, الروم: discord.TextChannel):
     global رقم_روم_الترقيات
     رقم_روم_الترقيات = الروم.id
+    save_state()
     await interaction.response.send_message(f"تم ضبط روم ترقيات الشرطة: {الروم.mention}", ephemeral=True)
 
 @bot.tree.command(name="ضبط_روم_عصابات_الترقيات", description="تحديد روم إرسال إعلانات ترقيات العصابات")
@@ -341,6 +418,7 @@ async def ضبط_روم_الترقيات(interaction: discord.Interaction, ال�
 async def ضبط_روم_عصابات_الترقيات(interaction: discord.Interaction, الروم: discord.TextChannel):
     global رقم_روم_عصابات_الترقيات
     رقم_روم_عصابات_الترقيات = الروم.id
+    save_state()
     await interaction.response.send_message(f"تم ضبط روم ترقيات العصابات: {الروم.mention}", ephemeral=True)
 
 @bot.tree.command(name="ضبط_روم_الإدارة_الترقيات", description="تحديد روم إرسال إعلانات ترقيات الإدارة")
@@ -348,24 +426,28 @@ async def ضبط_روم_عصابات_الترقيات(interaction: discord.Inter
 async def ضبط_روم_الإدارة_الترقيات(interaction: discord.Interaction, الروم: discord.TextChannel):
     global رقم_روم_الإدارة_الترقيات
     رقم_روم_الإدارة_الترقيات = الروم.id
+    save_state()
     await interaction.response.send_message(f"تم ضبط روم ترقيات الإدارة: {الروم.mention}", ephemeral=True)
 
 @bot.tree.command(name="تحديد_ترقية_شرطة", description="تحديد عدد الـ XP المطلوب لرتبة شرطة معينة")
 @app_commands.checks.has_permissions(administrator=True)
 async def تحديد_ترقية_شرطة(interaction: discord.Interaction, اسم_الرتبة: str, النقاط_المطلوبة: int):
     RANKS_XP[اسم_الرتبة] = النقاط_المطلوبة
+    save_state()
     await interaction.response.send_message(f"✅ تم ضبط رتبة الشرطة **{اسم_الرتبة}** لتتطلب **{النقاط_المطلوبة} XP**", ephemeral=True)
 
 @bot.tree.command(name="تحديد_ترقية_عصابة", description="تحديد عدد الـ XP المطلوب لرتبة عصابة معينة")
 @app_commands.checks.has_permissions(administrator=True)
 async def تحديد_ترقية_عصابة(interaction: discord.Interaction, اسم_الرتبة: str, النقاط_المطلوبة: int):
     GANG_RANKS_XP[اسم_الرتبة] = النقاط_المطلوبة
+    save_state()
     await interaction.response.send_message(f"🏴 تم ضبط رتبة العصابة **{اسم_الرتبة}** لتتطلب **{النقاط_المطلوبة} XP**", ephemeral=True)
 
 @bot.tree.command(name="تحديد_رتبة_إدارة", description="تحديد عدد النقاط الإدارية المطلوبة لرتبة الإدارة")
 @app_commands.checks.has_permissions(administrator=True)
 async def تحديد_رتبة_إدارة(interaction: discord.Interaction, اسم_الرتبة: str, النقاط_المطلوبة: int):
     ADMIN_RANKS_XP[اسم_الرتبة] = النقاط_المطلوبة
+    save_state()
     await interaction.response.send_message(f"🛡️ تم ضبط رتبة الإدارة **{اسم_الرتبة}** لتتطلب **{النقاط_المطلوبة} نقطة**", ephemeral=True)
 
 @bot.tree.command(name="قبول_تقرير", description="قبول تقرير عسكري وإعطائه XP محدد")
@@ -374,6 +456,7 @@ async def قبول_تقرير(interaction: discord.Interaction, العسكري: 
     stats = حساب_النقاط(العسكري.id)
     stats["xp"] += نقاط_المهمة
     stats["reports"] += 1
+    save_state()
     embed = discord.Embed(title="👮‍♂️ قبول تقرير عسكري", color=discord.Color.green())
     embed.add_field(name="العسكري", value=العسكري.mention, inline=False)
     embed.add_field(name="النقاط المضافة", value=f"+{نقاط_المهمة} XP", inline=True)
@@ -387,6 +470,7 @@ async def قبول_تقرير_عصابة(interaction: discord.Interaction, ال�
     stats = حساب_النقاط(العضو.id)
     stats["xp"] += نقاط_المهام
     stats["gang_reports"] += 1
+    save_state()
     embed = discord.Embed(title="🏴 قبول تقرير عصابة", color=discord.Color.dark_red())
     embed.add_field(name="العضو", value=العضو.mention, inline=False)
     embed.add_field(name="النقاط المضافة", value=f"+{نقاط_المهام} XP", inline=True)
@@ -458,6 +542,7 @@ async def بنك(interaction: discord.Interaction):
 async def راتب(interaction: discord.Interaction):
     stats = حساب_النقاط(interaction.user.id)
     stats['cash'] += 200
+    save_state()
     await interaction.response.send_message("تم استلام راتبك اليومي بقيمة 200 $ بنجاح!", ephemeral=True)
 
 @bot.tree.command(name="تحويل", description="تحويل أموال لعضو آخر")
@@ -469,6 +554,7 @@ async def تحويل(interaction: discord.Interaction, العضو: discord.Membe
         return
     stats_sender['cash'] -= المبلغ
     stats_receiver['cash'] += المبلغ
+    save_state()
     await interaction.response.send_message(f"تم تحويل {المبلغ} $ إلى {العضو.mention} بنجاح", ephemeral=True)
 
 @bot.tree.command(name="هوية", description="عرض بطاقة الهوية الخاصة بالشخصية")
@@ -581,5 +667,5 @@ async def on_ready():
     await bot.tree.sync()
     print(f"تم تسجيل الدخول باسم {bot.user.name} وتم مزامنة كافة أوامر السلاش بنجاح!")
 
-import os
+load_state()
 bot.run(os.environ['TOKEN'])
