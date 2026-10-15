@@ -20,9 +20,10 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 ‏import discord
-‏import aiosqlite
-‏from discord import app_commands
-‏from discord.ext import commands
+import aiosqlite
+from discord import app_commands
+from discord.ext import commands
+
 
 ‏# ------------------------- CONFIG ----------------------------
 
