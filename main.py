@@ -1,5 +1,5 @@
 # ============================================================
-# Discord Server Bot - main.py (Full Complete Code)
+# Discord Server Bot - main.py
 # Python 3.10+
 # ============================================================
 
@@ -16,9 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-# ⚠️ حط التوكن حقك هنا بين العلامتين بدل الكلام الإنجليزي هذا
-TOKEN = "حط_التوكن_حقك_هنا"
-
+TOKEN = os.getenv("DISCORD_TOKEN")
 DB_FILE = "server_bot.db"
 
 logging.basicConfig(level=logging.INFO)
@@ -67,6 +65,8 @@ async def set_setting(guild_id, key, value):
         )
         await db.commit()
 
+
+# ------------------------- قاعدة البيانات -------------------------
 
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
@@ -152,7 +152,7 @@ async def generate_profile_card(member: discord.Member, avg_rating: float, total
     return discord.File(buffer, filename="profile_card.png")
 
 
-# ------------------------- أزرار التذكرة -------------------------
+# ------------------------- أزرار التحكم بالتذكرة -------------------------
 
 class TicketControlView(discord.ui.View):
     def __init__(self):
@@ -172,7 +172,7 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="إضافة", emoji="➕", style=discord.ButtonStyle.success, custom_id="ticket_add")
     async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("➕ لإضافة عضو، استخدم المنشن.", ephemeral=True)
+        await interaction.response.send_message("➕ لإضافة عضو، اكتب المنشن الخاص به.", ephemeral=True)
 
     @discord.ui.button(label="إزالة", emoji="➖", style=discord.ButtonStyle.secondary, custom_id="ticket_remove")
     async def remove_member(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -180,56 +180,57 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="تقييم", emoji="⭐", style=discord.ButtonStyle.primary, custom_id="ticket_rate")
     async def rate_service(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⭐ شكراً لتقييمك! تم احتساب النجوم.", ephemeral=True)
+        await interaction.response.send_message("⭐ شكراً لتقييمك الخدمة! تم احتساب النجوم بنجاح.", ephemeral=True)
 
 
-# ------------------------- القائمة المنسدلة -------------------------
+# ------------------------- القائمة المنسدلة (المنيو) -------------------------
 
 class MainSelectMenu(discord.ui.Select):
     def __init__(self):
+        # يمكنك إضافة أو تعديل خيارات المنيو المنسدلة هنا بسهولة:
         options = [
-            discord.SelectOption(label="فتح تذكرة دعم فني", value="tickets", description="للتواصل مع الإدارة", emoji="🎫"),
+            discord.SelectOption(label="فتح تذكرة دعم فني", value="tickets", description="للتواصل مع الإدارة وحل مشكلتك", emoji="🎫"),
+            discord.SelectOption(label="تذكرة الاستفسارات والشكاوى", value="support", description="لتقديم استفسار أو شكوى للإدارة", emoji="📩"),
         ]
-        super().__init__(placeholder="اختر الخدمة المطلوبة...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="اختر الخدمة المطلوبة من هنا...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
-        if self.values[0] == "tickets":
-            guild = interaction.guild
+        guild = interaction.guild
+        async with aiosqlite.connect(DB_FILE) as db:
+            cur = await db.execute(
+                "SELECT channel_id FROM tickets WHERE guild_id=? AND user_id=? AND status='open'",
+                (guild.id, interaction.user.id),
+            )
+            row = await cur.fetchone()
+
+        if row and guild.get_channel(row[0]):
+            return await interaction.response.send_message(f"لديك تذكرة مفتوحة بالفعل: <#{row[0]}>", ephemeral=True)
+
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(view_channel=False),
+            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, attach_files=True),
+        }
+
+        try:
+            channel = await guild.create_text_channel(
+                name=f"ticket-{interaction.user.name}"[:90],
+                overwrites=overwrites,
+            )
             async with aiosqlite.connect(DB_FILE) as db:
-                cur = await db.execute(
-                    "SELECT channel_id FROM tickets WHERE guild_id=? AND user_id=? AND status='open'",
-                    (guild.id, interaction.user.id),
+                await db.execute(
+                    "INSERT INTO tickets (guild_id,channel_id,user_id,created_at) VALUES(?,?,?,?)",
+                    (guild.id, channel.id, interaction.user.id, now()),
                 )
-                row = await cur.fetchone()
+                await db.commit()
 
-            if row and guild.get_channel(row[0]):
-                return await interaction.response.send_message(f"لديك تذكرة مفتوحة بالفعل: <#{row[0]}>", ephemeral=True)
-
-            overwrites = {
-                guild.default_role: discord.PermissionOverwrite(view_channel=False),
-                interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, attach_files=True),
-            }
-
-            try:
-                channel = await guild.create_text_channel(
-                    name=f"ticket-{interaction.user.name}"[:90],
-                    overwrites=overwrites,
-                )
-                async with aiosqlite.connect(DB_FILE) as db:
-                    await db.execute(
-                        "INSERT INTO tickets (guild_id,channel_id,user_id,created_at) VALUES(?,?,?,?)",
-                        (guild.id, channel.id, interaction.user.id, now()),
-                    )
-                    await db.commit()
-
-                await channel.send(
-                    content=f"{interaction.user.mention}",
-                    embed=embed("🎫 تذكرتك مفتوحة", "تفضل بطرح مشكلتك، واستخدم الأزرار أدناه للتحكم."),
-                    view=TicketControlView(),
-                )
-                await interaction.response.send_message(f"تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
-            except discord.Forbidden:
-                await interaction.response.send_message("لا أملك صلاحية إنشاء القنوات.", ephemeral=True)
+            await channel.send(
+                content=f"{interaction.user.mention}",
+                embed=embed("🎫 تذكرتك مفتوحة", "تفضل بطرح مشكلتك، واستخدم الأزرار أدناه للتحكم بالتذكرة (إغلاق، إضافة، إزالة، تقييم)."),
+                view=TicketControlView(),
+            )
+            await interaction.response.send_message(f"تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
+        except discord.Forbidden:
+            await interaction.response.send_message("لا أملك صلاحية إنشاء القنوات.", ephemeral=True)
 
 
 class MainMenuView(discord.ui.View):
@@ -250,30 +251,34 @@ async def on_ready():
     bot.add_view(TicketControlView())
     try:
         synced = await bot.tree.sync()
-        log.info("Synced %s commands", len(synced))
-    except Exception:
-        log.exception("Sync failed")
-    log.info("Logged in as %s", bot.user)
+        log.info("Successfully synced %s commands", len(synced))
+    except Exception as e:
+        log.error("Failed to sync commands: %s", e)
+    log.info("Logged in as %s (%s)", bot.user, bot.user.id)
 
 
-@bot.tree.command(name="المنيو", description="إرسال القائمة الرئيسية للتذاكر")
+# أمر إنشاء المنيو الأساسي
+@bot.tree.command(name="انشاء_منيو", description="إرسال لوحة المنيو الرئيسية لفتح التذاكر")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def menu_cmd(interaction: discord.Interaction):
-    e = embed("✨ القائمة الرئيسية للسيرفر", "اختر من القائمة المنسدلة أدناه لفتح تذكرة:")
+    e = embed("✨ القائمة الرئيسية للسيرفر", "اختر من القائمة المنسدلة أدناه لفتح تذكرة والتواصل مع الإدارة:")
     await interaction.channel.send(embed=e, view=MainMenuView())
     await interaction.response.send_message("تم إرسال المنيو بنجاح!", ephemeral=True)
 
 
-@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لأمر !كشف_للاداره")
+# أمر تحديد روم الكشف
+@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر !كشف_للاداره فيه فقط")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def set_kashf_channel(interaction: discord.Interaction, channel: discord.TextChannel):
     await set_setting(interaction.guild_id, "kashf_channel_id", str(channel.id))
     await interaction.response.send_message(f"✅ تم تحديد روم كشف الإدارة بنجاح: {channel.mention}", ephemeral=True)
 
 
+# أمر !كشف_للاداره
 @bot.command(name="كشف_للاداره")
 async def kashf_admin(ctx, member: discord.Member = None):
     allowed_channel_id = await setting(ctx.guild.id, "kashf_channel_id")
+    
     if allowed_channel_id and ctx.channel.id != int(allowed_channel_id):
         return await ctx.message.delete()
 
@@ -291,5 +296,5 @@ async def kashf_admin(ctx, member: discord.Member = None):
 
 if __name__ == "__main__":
     if not TOKEN:
-        raise RuntimeError("Missing token.")
+        raise RuntimeError("Missing DISCORD_TOKEN environment variable.")
     bot.run(TOKEN)
