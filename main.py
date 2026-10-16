@@ -1,5 +1,5 @@
 # ============================================================
-# Discord Server Bot - Full Integrated Code (Tickets + Profile Canvas + Kashf)
+# Discord Server Bot - main.py (Full Complete Code)
 # Python 3.10+
 # ============================================================
 
@@ -16,7 +16,9 @@ from discord import app_commands
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-TOKEN = os.getenv("MTU1MzAwOTMzNzAxNzA0MDk5Ng.GBbq8J.Cjk_KwT2g25g6xxl47aYKYabxuxm9wTU2DVL24")
+# ⚠️ حط التوكن حقك هنا بين العلامتين بدل الكلام الإنجليزي هذا
+TOKEN = "حط_التوكن_حقك_هنا"
+
 DB_FILE = "server_bot.db"
 
 logging.basicConfig(level=logging.INFO)
@@ -66,8 +68,6 @@ async def set_setting(guild_id, key, value):
         await db.commit()
 
 
-# ------------------------- قاعدة البيانات -------------------------
-
 async def init_db():
     async with aiosqlite.connect(DB_FILE) as db:
         await db.executescript("""
@@ -91,7 +91,7 @@ async def init_db():
         await db.commit()
 
 
-# ------------------------- تصميم بطاقة الكشف الإداري (Canvas) -------------------------
+# ------------------------- بطاقة كشف الإدارة (Canvas) -------------------------
 
 async def generate_profile_card(member: discord.Member, avg_rating: float, total_ratings: int, tickets_claimed: int):
     width, height = 900, 450
@@ -152,7 +152,7 @@ async def generate_profile_card(member: discord.Member, avg_rating: float, total
     return discord.File(buffer, filename="profile_card.png")
 
 
-# ------------------------- أزرار التحكم داخل التذكرة -------------------------
+# ------------------------- أزرار التذكرة -------------------------
 
 class TicketControlView(discord.ui.View):
     def __init__(self):
@@ -172,7 +172,7 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="إضافة", emoji="➕", style=discord.ButtonStyle.success, custom_id="ticket_add")
     async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("➕ لإضافة عضو، استخدم المنشن أو اكتب أمره هنا.", ephemeral=True)
+        await interaction.response.send_message("➕ لإضافة عضو، استخدم المنشن.", ephemeral=True)
 
     @discord.ui.button(label="إزالة", emoji="➖", style=discord.ButtonStyle.secondary, custom_id="ticket_remove")
     async def remove_member(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -180,17 +180,17 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="تقييم", emoji="⭐", style=discord.ButtonStyle.primary, custom_id="ticket_rate")
     async def rate_service(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⭐ شكراً لتقييمك الخدمة! تم احتساب النجوم بنجاح.", ephemeral=True)
+        await interaction.response.send_message("⭐ شكراً لتقييمك! تم احتساب النجوم.", ephemeral=True)
 
 
-# ------------------------- القائمة المنسدلة (المنيو) -------------------------
+# ------------------------- القائمة المنسدلة -------------------------
 
 class MainSelectMenu(discord.ui.Select):
     def __init__(self):
         options = [
-            discord.SelectOption(label="فتح تذكرة دعم فني", value="tickets", description="للتواصل مع الإدارة وحل مشكلتك", emoji="🎫"),
+            discord.SelectOption(label="فتح تذكرة دعم فني", value="tickets", description="للتواصل مع الإدارة", emoji="🎫"),
         ]
-        super().__init__(placeholder="اختر الخدمة المطلوبة من هنا...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="اختر الخدمة المطلوبة...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         if self.values[0] == "tickets":
@@ -224,7 +224,7 @@ class MainSelectMenu(discord.ui.Select):
 
                 await channel.send(
                     content=f"{interaction.user.mention}",
-                    embed=embed("🎫 تذكرتك مفتوحة", "أهلاً بك! تفضل بطرح مشكلتك، واستخدم الأزرار أدناه للتحكم بالتذكرة (إغلاق، إضافة، إزالة، تقييم)."),
+                    embed=embed("🎫 تذكرتك مفتوحة", "تفضل بطرح مشكلتك، واستخدم الأزرار أدناه للتحكم."),
                     view=TicketControlView(),
                 )
                 await interaction.response.send_message(f"تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
@@ -256,42 +256,33 @@ async def on_ready():
     log.info("Logged in as %s", bot.user)
 
 
-# أمر إرسال المنيو الرئيسي للسيرفر (سلاش)
-@bot.tree.command(name="المنيو", description="إرسال القائمة الرئيسية للتذاكر والخدمات")
+@bot.tree.command(name="المنيو", description="إرسال القائمة الرئيسية للتذاكر")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def menu_cmd(interaction: discord.Interaction):
-    e = embed("✨ القائمة الرئيسية للسيرفر", "اختر من القائمة المنسدلة أدناه لفتح تذكرة والتواصل مع الإدارة:")
+    e = embed("✨ القائمة الرئيسية للسيرفر", "اختر من القائمة المنسدلة أدناه لفتح تذكرة:")
     await interaction.channel.send(embed=e, view=MainMenuView())
     await interaction.response.send_message("تم إرسال المنيو بنجاح!", ephemeral=True)
 
 
-# أمر تحديد روم كشف الإدارة (سلاش للإدارة فقط)
-@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر !كشف_للاداره فيه فقط")
+@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لأمر !كشف_للاداره")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def set_kashf_channel(interaction: discord.Interaction, channel: discord.TextChannel):
     await set_setting(interaction.guild_id, "kashf_channel_id", str(channel.id))
     await interaction.response.send_message(f"✅ تم تحديد روم كشف الإدارة بنجاح: {channel.mention}", ephemeral=True)
 
 
-# ------------------------- أمر !كشف_للاداره -------------------------
-
 @bot.command(name="كشف_للاداره")
 async def kashf_admin(ctx, member: discord.Member = None):
     allowed_channel_id = await setting(ctx.guild.id, "kashf_channel_id")
-    
-    # إذا تم تحديد روم ولا يكتب فيه العضو، يتم حذف الرسالة
     if allowed_channel_id and ctx.channel.id != int(allowed_channel_id):
         return await ctx.message.delete()
 
     member = member or ctx.author
-    
-    # بيانات الإحصائيات الافتراضية أو المرتبطة بالتذاكر والنجوم
     tickets = 15
     avg = 4.9
     total_stars = 75
 
     file = await generate_profile_card(member, avg, total_stars, tickets)
-    
     e = embed(f"📊 كشف حساب الأداء للإداري: {member.display_name}")
     e.set_image(url="attachment://profile_card.png")
     
@@ -300,5 +291,5 @@ async def kashf_admin(ctx, member: discord.Member = None):
 
 if __name__ == "__main__":
     if not TOKEN:
-        raise RuntimeError("Missing DISCORD_TOKEN environment variable.")
+        raise RuntimeError("Missing token.")
     bot.run(TOKEN)
