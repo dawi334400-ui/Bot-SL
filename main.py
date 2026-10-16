@@ -13,7 +13,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 MENU_DB = "menus.db"
 
 # 🛑 ضع هنا ID الروم المخصص لكشف حساب الإدارة (اتركه None إذا تبيه يشتغل بأي روم، أو حط الـ ID بين القوسين)
-ALLOWED_CHANNEL_ID = None  # مثال: ALLOWED_CHANNEL_ID = 123456789012345678
+ALLOWED_CHANNEL_ID = 1560657965529178252  # مثال: ALLOWED_CHANNEL_ID = 123456789012345678
 
 # --- 1. تهيئة قاعدة البيانات ---
 async def setup_menu_db():
