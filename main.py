@@ -33,7 +33,6 @@ async def setup_menu_db():
         """)
         await db.commit()
 
-# زر إغلاق القناة داخل الروم المنشأ
 class CloseChannelView(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -63,6 +62,7 @@ class MenuButton(discord.ui.Button):
         )
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         action = self.item.get("action", "channel")
         value = self.item.get("value", "لم يتم تحديد محتوى هذا الزر.")
         label = self.item.get("label", "قسم")
@@ -70,7 +70,7 @@ class MenuButton(discord.ui.Button):
         if action == "channel":
             guild = interaction.guild
             if not guild:
-                return await interaction.response.send_message("هذا الأمر يعمل داخل السيرفرات فقط.", ephemeral=True)
+                return await interaction.followup.send("هذا الأمر يعمل داخل السيرفرات فقط.", ephemeral=True)
 
             async with aiosqlite.connect(MENU_DB) as db:
                 async with db.execute(
@@ -93,7 +93,6 @@ class MenuButton(discord.ui.Button):
                     )
                 await db.commit()
 
-            # إنشاء اسم القناة باسم الزر والرقم التسلسلي (مثال: تقديم-01)
             channel_name = f"{label}-{count:02d}".replace(" ", "-").lower()
 
             overwrites = {
@@ -112,11 +111,11 @@ class MenuButton(discord.ui.Button):
                 )
                 
                 await new_channel.send(content=interaction.user.mention, embed=embed, view=CloseChannelView())
-                await interaction.response.send_message(f"✅ تم فتح قناتك الخاصة بنجاح: {new_channel.mention}", ephemeral=True)
+                await interaction.followup.send(f"✅ تم فتح قناتك الخاصة بنجاح: {new_channel.mention}", ephemeral=True)
             except Exception as e:
-                await interaction.response.send_message(f"❌ حدث خطأ أثناء إنشاء القناة: {e}", ephemeral=True)
+                await interaction.followup.send(f"❌ حدث خطأ أثناء إنشاء القناة: {e}", ephemeral=True)
         else:
-            await interaction.response.send_message(value, ephemeral=True)
+            await interaction.followup.send(value, ephemeral=True)
 
 class PublishedMenu(discord.ui.View):
     def __init__(self, buttons, message_id):
@@ -126,7 +125,7 @@ class PublishedMenu(discord.ui.View):
 
 class MenuEditor(discord.ui.View):
     def __init__(self, owner_id, message):
-        super().__init__(timeout=300)
+        super().__init__(timeout=None)
         self.owner_id = owner_id
         self.message = message
 
@@ -146,7 +145,7 @@ class MenuEditor(discord.ui.View):
     async def refresh_menu(self, interaction: discord.Interaction):
         data = await self.get_data()
         if data is None:
-            return await interaction.response.send_message("لم يتم العثور على المنيو.", ephemeral=True)
+            return
 
         buttons = json.loads(data["buttons"])
         embed = discord.Embed(
@@ -156,7 +155,6 @@ class MenuEditor(discord.ui.View):
         )
 
         await self.message.edit(embed=embed, view=PublishedMenu(buttons, self.message.id))
-        await interaction.response.send_message("✅ تم تحديث المنيو بنجاح.", ephemeral=True)
 
     @discord.ui.button(label="تعديل العنوان", emoji="📝", style=discord.ButtonStyle.primary)
     async def edit_title(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -195,7 +193,9 @@ class MenuEditor(discord.ui.View):
 
     @discord.ui.button(label="تحديث المنيو", emoji="🔄", style=discord.ButtonStyle.success)
     async def update_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         await self.refresh_menu(interaction)
+        await interaction.followup.send("✅ تم تحديث المنيو بنجاح.", ephemeral=True)
 
 class MenuTextModal(discord.ui.Modal):
     def __init__(self, editor, field):
@@ -212,6 +212,7 @@ class MenuTextModal(discord.ui.Modal):
         self.add_item(self.text)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         async with aiosqlite.connect(MENU_DB) as db:
             await db.execute(
                 f"UPDATE custom_menus SET {self.field}=? WHERE message_id=?",
@@ -220,6 +221,7 @@ class MenuTextModal(discord.ui.Modal):
             await db.commit()
 
         await self.editor.refresh_menu(interaction)
+        await interaction.followup.send("✅ تم تحديث العنوان/الوصف بنجاح!", ephemeral=True)
 
 class MenuButtonModal(discord.ui.Modal):
     def __init__(self, editor, mode):
@@ -229,9 +231,9 @@ class MenuButtonModal(discord.ui.Modal):
         super().__init__(title=titles[mode])
 
         self.index = discord.ui.TextInput(
-            label="رقم الزر (يبدأ من 1)",
-            placeholder="اتركه فارغًا عند إضافة زر جديد",
-            required=(mode != "add"),
+            label="رقم الزر (اتركه فارغاً عند الإضافة)",
+            placeholder="مثال: 1 (مطلوب للتعديل والحذف فقط)",
+            required=False,
             max_length=2
         )
         self.add_item(self.index)
@@ -249,18 +251,19 @@ class MenuButtonModal(discord.ui.Modal):
             self.add_item(self.value_input)
 
     async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         async with aiosqlite.connect(MENU_DB) as db:
             cur = await db.execute("SELECT buttons FROM custom_menus WHERE message_id=?", (self.editor.message.id,))
             row = await cur.fetchone()
 
             if not row:
-                return await interaction.response.send_message("المنيو غير موجودة.", ephemeral=True)
+                return await interaction.followup.send("المنيو غير موجودة.", ephemeral=True)
 
             buttons = json.loads(row[0])
 
             if self.mode == "add":
                 if len(buttons) >= 25:
-                    return await interaction.response.send_message("لا يمكن إضافة أكثر من 25 زرًا.", ephemeral=True)
+                    return await interaction.followup.send("لا يمكن إضافة أكثر من 25 زرًا.", ephemeral=True)
                 
                 emoji_val = self.emoji_input.value.strip() if self.emoji_input.value else None
                 buttons.append({
@@ -275,8 +278,8 @@ class MenuButtonModal(discord.ui.Modal):
                     index = int(self.index.value) - 1
                     if index < 0 or index >= len(buttons):
                         raise ValueError
-                except ValueError:
-                    return await interaction.response.send_message("رقم الزر غير صحيح.", ephemeral=True)
+                except (ValueError, TypeError):
+                    return await interaction.followup.send("يرجى إدخال رقم زر صحيح للتعديل أو الحذف.", ephemeral=True)
 
                 if self.mode == "delete":
                     buttons.pop(index)
@@ -296,6 +299,7 @@ class MenuButtonModal(discord.ui.Modal):
             await db.commit()
 
         await self.editor.refresh_menu(interaction)
+        await interaction.followup.send("✅ تم تحديث الأزرار بنجاح!", ephemeral=True)
 
 intents = discord.Intents.default()
 intents.guilds = True
@@ -309,7 +313,7 @@ async def on_ready():
     
     async with aiosqlite.connect(MENU_DB) as db:
         db.row_factory = aiosqlite.Row
-        cur = await db.execute("SELECT message_id, buttons FROM custom_menus")
+        cur = await db.execute("SELECT message_id, buttons, owner_id FROM custom_menus")
         rows = await cur.fetchall()
         for row in rows:
             buttons = json.loads(row["buttons"])
@@ -318,7 +322,6 @@ async def on_ready():
     await bot.tree.sync()
     print(f"✅ تم تشغيل البوت بنجاح باسم: {bot.user}")
 
-# أمر السلاش باللغة العربية بالكامل
 @bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد في القناة الحالية")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def create_custom_menu(interaction: discord.Interaction):
@@ -350,6 +353,7 @@ async def create_custom_menu(interaction: discord.Interaction):
         )
         await db.commit()
 
+    # إعادة ربط لوحة التحكم بالرسالة المرسلة
     await interaction.response.send_message(
         "تم إنشاء المنيو في هذه القناة. لوحة التعديل بالأسفل (مخفية للعامة).",
         view=MenuEditor(interaction.user.id, message),
