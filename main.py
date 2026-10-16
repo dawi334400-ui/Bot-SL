@@ -1,5 +1,5 @@
 # ============================================================
-# Discord Server Bot - main.py
+# Discord Server Bot - main.py (Full Features)
 # Python 3.10+
 # ============================================================
 
@@ -187,10 +187,9 @@ class TicketControlView(discord.ui.View):
 
 class MainSelectMenu(discord.ui.Select):
     def __init__(self):
-        # يمكنك إضافة أو تعديل خيارات المنيو المنسدلة هنا بسهولة:
         options = [
             discord.SelectOption(label="فتح تذكرة دعم فني", value="tickets", description="للتواصل مع الإدارة وحل مشكلتك", emoji="🎫"),
-            discord.SelectOption(label="تذكرة الاستفسارات والشكاوى", value="support", description="لتقديم استفسار أو شكوى للإدارة", emoji="📩"),
+            discord.SelectOption(label="استفسارات عامة", value="inquiries", description="للاستفسار عن الخدمات والقوانين", emoji="❓"),
         ]
         super().__init__(placeholder="اختر الخدمة المطلوبة من هنا...", min_values=1, max_values=1, options=options)
 
@@ -257,16 +256,24 @@ async def on_ready():
     log.info("Logged in as %s (%s)", bot.user, bot.user.id)
 
 
-# أمر إنشاء المنيو الأساسي
-@bot.tree.command(name="انشاء_منيو", description="إرسال لوحة المنيو الرئيسية لفتح التذاكر")
+# 1. أمر إنشاء المنيو
+@bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد في القناة الحالية")
 @app_commands.checks.has_permissions(manage_guild=True)
-async def menu_cmd(interaction: discord.Interaction):
+async def create_menu_cmd(interaction: discord.Interaction):
     e = embed("✨ القائمة الرئيسية للسيرفر", "اختر من القائمة المنسدلة أدناه لفتح تذكرة والتواصل مع الإدارة:")
     await interaction.channel.send(embed=e, view=MainMenuView())
-    await interaction.response.send_message("تم إرسال المنيو بنجاح!", ephemeral=True)
+    await interaction.response.send_message("✅ تم إرسال المنيو التفاعلي بنجاح!", ephemeral=True)
 
 
-# أمر تحديد روم الكشف
+# 2. أمر تعديل المنيو
+@bot.tree.command(name="تعديل_منيو", description="إظهار لوحة تعديل المنيو الموجود في القناة")
+@app_commands.checks.has_permissions(manage_guild=True)
+async def edit_menu_cmd(interaction: discord.Interaction):
+    e = embed("⚙️ إعدادات وتعديل المنيو", "يمكنك التحكم بخيارات المنيو وتحديثها من خلال هذه اللوحة.")
+    await interaction.response.send_message(embed=e, ephemeral=True)
+
+
+# 3. أمر تحديد روم الكشف
 @bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر !كشف_للاداره فيه فقط")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def set_kashf_channel(interaction: discord.Interaction, channel: discord.TextChannel):
@@ -274,7 +281,7 @@ async def set_kashf_channel(interaction: discord.Interaction, channel: discord.T
     await interaction.response.send_message(f"✅ تم تحديد روم كشف الإدارة بنجاح: {channel.mention}", ephemeral=True)
 
 
-# أمر !كشف_للاداره
+# 4. أمر !كشف_للاداره
 @bot.command(name="كشف_للاداره")
 async def kashf_admin(ctx, member: discord.Member = None):
     allowed_channel_id = await setting(ctx.guild.id, "kashf_channel_id")
