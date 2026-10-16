@@ -16,7 +16,7 @@ from discord import app_commands
 from discord.ext import commands
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-TOKEN = os.getenv("DISCORD_TOKEN")
+TOKEN = os.getenv("MTU1MzAwOTMzNzAxNzA0MDk5Ng.GBbq8J.Cjk_KwT2g25g6xxl47aYKYabxuxm9wTU2DVL24")
 DB_FILE = "server_bot.db"
 
 logging.basicConfig(level=logging.INFO)
