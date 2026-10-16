@@ -6,12 +6,10 @@ from discord.ext import commands
 import aiosqlite
 from dotenv import load_dotenv
 
-# تحميل متغيرات البيئة من ملف .env
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 MENU_DB = "menus.db"
 
-# --- 1. تهيئة قاعدة البيانات ---
 async def setup_menu_db():
     async with aiosqlite.connect(MENU_DB) as db:
         await db.execute("""
@@ -25,14 +23,35 @@ async def setup_menu_db():
                 buttons TEXT NOT NULL
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS channel_counters (
+                guild_id INTEGER,
+                button_label TEXT,
+                counter INTEGER,
+                PRIMARY KEY (guild_id, button_label)
+            )
+        """)
         await db.commit()
 
-# --- 2. أزرار المنيو المنشور ---
+# زر إغلاق القناة داخل الروم المنشأ
+class CloseChannelView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @discord.ui.button(label="إغلاق القناة", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="close_dynamic_channel")
+    async def close_channel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.send_message("🔒 سيتم إغلاق وحذف هذه القناة خلال 3 ثوانٍ...", ephemeral=False)
+        import asyncio
+        await asyncio.sleep(3)
+        try:
+            await interaction.channel.delete()
+        except Exception:
+            pass
+
 class MenuButton(discord.ui.Button):
     def __init__(self, item, index, message_id):
         self.item = item
         emoji_val = item.get("emoji")
-        # تصحيح: تحويل النص الفارغ إلى None لتجنب أخطاء Discord
         if emoji_val and not emoji_val.strip():
             emoji_val = None
 
@@ -44,13 +63,60 @@ class MenuButton(discord.ui.Button):
         )
 
     async def callback(self, interaction: discord.Interaction):
-        action = self.item.get("action", "message")
+        action = self.item.get("action", "channel")
         value = self.item.get("value", "لم يتم تحديد محتوى هذا الزر.")
+        label = self.item.get("label", "قسم")
 
-        if action in ["link", "message"]:
-            await interaction.response.send_message(value, ephemeral=True)
+        if action == "channel":
+            guild = interaction.guild
+            if not guild:
+                return await interaction.response.send_message("هذا الأمر يعمل داخل السيرفرات فقط.", ephemeral=True)
+
+            async with aiosqlite.connect(MENU_DB) as db:
+                async with db.execute(
+                    "SELECT counter FROM channel_counters WHERE guild_id = ? AND button_label = ?", 
+                    (guild.id, label)
+                ) as cursor:
+                    row = await cursor.fetchone()
+                
+                if row:
+                    count = row[0] + 1
+                    await db.execute(
+                        "UPDATE channel_counters SET counter = ? WHERE guild_id = ? AND button_label = ?", 
+                        (count, guild.id, label)
+                    )
+                else:
+                    count = 1
+                    await db.execute(
+                        "INSERT INTO channel_counters (guild_id, button_label, counter) VALUES (?, ?, ?)", 
+                        (guild.id, label, count)
+                    )
+                await db.commit()
+
+            # إنشاء اسم القناة باسم الزر والرقم التسلسلي (مثال: تقديم-01)
+            channel_name = f"{label}-{count:02d}".replace(" ", "-").lower()
+
+            overwrites = {
+                guild.default_role: discord.PermissionOverwrite(view_channel=False),
+                interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True),
+                guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True)
+            }
+            
+            try:
+                new_channel = await guild.create_text_channel(name=channel_name, overwrites=overwrites)
+                
+                embed = discord.Embed(
+                    title=f"📁 {label} #{count:02d}",
+                    description=f"مرحباً بك {interaction.user.mention}!\n\n{value}\n\n*يمكنك إغلاق هذه القناة بالضغط على الزر أدناه.*",
+                    color=discord.Color.green()
+                )
+                
+                await new_channel.send(content=interaction.user.mention, embed=embed, view=CloseChannelView())
+                await interaction.response.send_message(f"✅ تم فتح قناتك الخاصة بنجاح: {new_channel.mention}", ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"❌ حدث خطأ أثناء إنشاء القناة: {e}", ephemeral=True)
         else:
-            await interaction.response.send_message("إجراء هذا الزر غير معروف.", ephemeral=True)
+            await interaction.response.send_message(value, ephemeral=True)
 
 class PublishedMenu(discord.ui.View):
     def __init__(self, buttons, message_id):
@@ -58,7 +124,6 @@ class PublishedMenu(discord.ui.View):
         for index, item in enumerate(buttons[:25]):
             self.add_item(MenuButton(item, index, message_id))
 
-# --- 3. لوحة تحكم وتعديل المنيو (خاصة بـ Ephemeral) ---
 class MenuEditor(discord.ui.View):
     def __init__(self, owner_id, message):
         super().__init__(timeout=300)
@@ -132,7 +197,6 @@ class MenuEditor(discord.ui.View):
     async def update_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.refresh_menu(interaction)
 
-# --- 4. النوافذ المنبثقة (Modals) ---
 class MenuTextModal(discord.ui.Modal):
     def __init__(self, editor, field):
         self.editor = editor
@@ -176,7 +240,7 @@ class MenuButtonModal(discord.ui.Modal):
             self.label_input = discord.ui.TextInput(label="اسم الزر", max_length=80)
             self.emoji_input = discord.ui.TextInput(label="الإيموجي (اختياري)", required=False, max_length=20)
             self.value_input = discord.ui.TextInput(
-                label="الرسالة التي يرسلها الزر",
+                label="محتوى الرسالة داخل القناة الخاصة",
                 style=discord.TextStyle.paragraph,
                 max_length=1000
             )
@@ -202,7 +266,7 @@ class MenuButtonModal(discord.ui.Modal):
                 buttons.append({
                     "label": self.label_input.value,
                     "emoji": emoji_val,
-                    "action": "message",
+                    "action": "channel",
                     "value": self.value_input.value
                 })
 
@@ -221,7 +285,7 @@ class MenuButtonModal(discord.ui.Modal):
                     buttons[index] = {
                         "label": self.label_input.value,
                         "emoji": emoji_val,
-                        "action": "message",
+                        "action": "channel",
                         "value": self.value_input.value
                     }
 
@@ -233,14 +297,16 @@ class MenuButtonModal(discord.ui.Modal):
 
         await self.editor.refresh_menu(interaction)
 
-# --- 5. إعداد البوت والحدث عند الإقلاع ---
 intents = discord.Intents.default()
+intents.guilds = True
+intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 @bot.event
 async def on_ready():
     await setup_menu_db()
-    # استعادة المنيوهات المحفوظة لتستمر أزرارها بالعمل بعد إعادة تشغيل البوت
+    bot.add_view(CloseChannelView())
+    
     async with aiosqlite.connect(MENU_DB) as db:
         db.row_factory = aiosqlite.Row
         cur = await db.execute("SELECT message_id, buttons FROM custom_menus")
@@ -252,8 +318,8 @@ async def on_ready():
     await bot.tree.sync()
     print(f"✅ تم تشغيل البوت بنجاح باسم: {bot.user}")
 
-# --- 6. أمر السلاش /menu_create ---
-@bot.tree.command(name="menu_create", description="إنشاء منيو تفاعلي جديد")
+# أمر السلاش باللغة العربية بالكامل
+@bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد في القناة الحالية")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def create_custom_menu(interaction: discord.Interaction):
     if interaction.guild is None or interaction.channel is None:
