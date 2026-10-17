@@ -1,305 +1,425 @@
-# ============================================================
-# Discord Server Bot - main.py (Full Features)
-# Python 3.10+
-# ============================================================
-
-import os
-import io
-import time
-import asyncio
-import logging
-from datetime import datetime, timezone
-
 import discord
-import aiosqlite
-from discord import app_commands
 from discord.ext import commands
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from discord import app_commands
+import os
+import json
+import asyncio
+from PIL import Image, ImageDraw, ImageFont
+import io
 
-TOKEN = os.getenv("DISCORD_TOKEN")
-DB_FILE = "server_bot.db"
-
-logging.basicConfig(level=logging.INFO)
-log = logging.getLogger("server-bot")
-
+# ================= =================
+#  Discord Intents and Bot Setup
+# ================= =================
 intents = discord.Intents.default()
-intents.members = True
 intents.message_content = True
-intents.guilds = True
-intents.messages = True
+intents.members = True
 
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-def now():
-    return int(time.time())
+DATA_FILE = "bot_data.json"
 
+# ================= =================
+#  Database Helper Functions
+# ================= =================
+def load_data():
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Error loading {DATA_FILE}: {e}")
+    return {
+        "menus": {},
+        "staff_stats": {},
+        "active_tickets": {},
+        "kashf_channel_id": None
+    }
 
-def embed(title, description="", color=discord.Color.blurple()):
-    return discord.Embed(
-        title=title,
-        description=description,
-        color=color,
-        timestamp=datetime.now(timezone.utc),
-    )
+def save_data(data):
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"Error saving {DATA_FILE}: {e}")
 
+db_data = load_data()
 
-async def setting(guild_id, key, default=None):
-    async with aiosqlite.connect(DB_FILE) as db:
-        cur = await db.execute(
-            "SELECT value FROM settings WHERE guild_id=? AND key=?",
-            (guild_id, key),
-        )
-        row = await cur.fetchone()
-        return row[0] if row else default
+# ================= =================
+#  Profile Card Generation Logic
+# ================= =================
+def generate_profile_card(member, tickets_count, avg_rating, total_stars):
+    width, height = 600, 300
+    bg_color = (20, 22, 26)
+    card_color = (30, 35, 42)
+    accent_color = (114, 137, 218)
+    text_color = (255, 255, 255)
 
+    img = Image.new("RGBA", (width, height), bg_color)
+    draw = ImageDraw.Draw(img)
 
-async def set_setting(guild_id, key, value):
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.execute(
-            """
-            INSERT INTO settings(guild_id,key,value)
-            VALUES(?,?,?)
-            ON CONFLICT(guild_id,key)
-            DO UPDATE SET value=excluded.value
-            """,
-            (guild_id, key, str(value)),
-        )
-        await db.commit()
-
-
-# ------------------------- قاعدة البيانات -------------------------
-
-async def init_db():
-    async with aiosqlite.connect(DB_FILE) as db:
-        await db.executescript("""
-        CREATE TABLE IF NOT EXISTS settings(
-            guild_id INTEGER NOT NULL,
-            key TEXT NOT NULL,
-            value TEXT,
-            PRIMARY KEY(guild_id,key)
-        );
-
-        CREATE TABLE IF NOT EXISTS tickets(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id INTEGER NOT NULL,
-            channel_id INTEGER NOT NULL UNIQUE,
-            user_id INTEGER NOT NULL,
-            claimed_by INTEGER,
-            status TEXT NOT NULL DEFAULT 'open',
-            created_at INTEGER NOT NULL
-        );
-        """)
-        await db.commit()
-
-
-# ------------------------- بطاقة كشف الإدارة (Canvas) -------------------------
-
-async def generate_profile_card(member: discord.Member, avg_rating: float, total_ratings: int, tickets_claimed: int):
-    width, height = 900, 450
-    card = Image.new("RGBA", (width, height), (20, 24, 33, 255))
-    draw = ImageDraw.Draw(card)
+    # Draw rounded background card
+    draw.rounded_rectangle([20, 20, width - 20, height - 20], radius=15, fill=card_color)
 
     try:
-        font_title = ImageFont.truetype("arial.ttf", 26)
-        font_bold = ImageFont.truetype("arial.ttf", 20)
+        font_large = ImageFont.truetype("arial.ttf", 22)
         font_small = ImageFont.truetype("arial.ttf", 16)
-    except:
-        font_title = ImageFont.load_default()
-        font_bold = ImageFont.load_default()
+    except IOError:
+        font_large = ImageFont.load_default()
         font_small = ImageFont.load_default()
 
-    # المربع الأول - اليمين (الأفتار، الاسم، اليوزر، الرتبة)
-    draw.rounded_rectangle([30, 30, 320, 420], radius=20, fill=(30, 36, 48, 255), outline=(60, 70, 90), width=2)
-    
-    try:
-        asset = member.display_avatar.replace(size=128)
-        data = await asset.read()
-        avatar_img = Image.open(io.BytesIO(data)).convert("RGBA")
-        avatar_img = avatar_img.resize((100, 100))
-        
-        mask = Image.new("L", (100, 100), 0)
-        mask_draw = ImageDraw.Draw(mask)
-        mask_draw.ellipse((0, 0, 100, 100), fill=255)
-        avatar_img = ImageOps.fit(avatar_img, mask.size, centering=(0.5, 0.5))
-        card.paste(avatar_img, (125, 60), mask)
-    except Exception:
-        pass
+    # Draw Admin Name
+    draw.text((40, 35), f"بطاقة أداء الإداري: {member.name}", fill=text_color, font=font_large)
 
-    name_text = member.display_name[:15]
-    role_text = f"الرتبة: {member.top_role.name[:15]}"
-    draw.text((175, 185), name_text, fill=(255, 255, 255), font=font_bold, anchor="ms")
-    draw.text((175, 215), f"@{member.name}", fill=(150, 160, 180), font=font_small, anchor="ms")
-    draw.text((175, 255), role_text, fill=(241, 196, 15), font=font_small, anchor="ms")
+    # Total Tickets Box
+    draw.rounded_rectangle([40, 90, 200, 180], radius=10, fill=(45, 52, 62))
+    draw.text((50, 100), "إجمالي التكتات", fill=(180, 180, 180), font=font_small)
+    draw.text((50, 130), str(tickets_count), fill=accent_color, font=font_large)
 
-    # المربع الثاني - التذاكر المستلمة
-    draw.rounded_rectangle([350, 30, 580, 215], radius=15, fill=(30, 36, 48, 255), outline=(52, 152, 219), width=2)
-    draw.text((380, 55), "التذاكر المستلمة", fill=(150, 160, 180), font=font_small)
-    draw.text((380, 115), str(tickets_claimed), fill=(255, 255, 255), font=font_title)
+    # Average Rating Box
+    draw.rounded_rectangle([215, 90, 375, 180], radius=10, fill=(45, 52, 62))
+    draw.text((225, 100), "متوسط التقييم", fill=(180, 180, 180), font=font_small)
+    draw.text((225, 130), f"⭐ {avg_rating:.1f}/5.0", fill=(255, 215, 0), font=font_large)
 
-    # المربع الثالث - متوسط التقييم
-    draw.rounded_rectangle([610, 30, 870, 215], radius=15, fill=(30, 36, 48, 255), outline=(241, 196, 15), width=2)
-    draw.text((640, 55), "متوسط التقييم", fill=(150, 160, 180), font=font_small)
-    draw.text((640, 115), f"{avg_rating:.1f} / 5.0", fill=(255, 255, 255), font=font_title)
+    # Total Stars Box
+    draw.rounded_rectangle([390, 90, 550, 180], radius=10, fill=(45, 52, 62))
+    draw.text((400, 100), "مجموع النجوم", fill=(180, 180, 180), font=font_small)
+    draw.text((400, 130), str(total_stars), fill=(255, 215, 0), font=font_large)
 
-    # المربع الرابع - إجمالي النجوم والتقييمات
-    draw.rounded_rectangle([350, 235, 870, 420], radius=15, fill=(30, 36, 48, 255), outline=(46, 204, 113), width=2)
-    draw.text((380, 260), "إجمالي النجوم والتقييمات", fill=(150, 160, 180), font=font_small)
-    draw.text((380, 320), f"مجموع النجوم: ⭐ {total_ratings}", fill=(255, 255, 255), font=font_bold)
-    draw.text((380, 355), f"الحالة: تم استلام التذاكر بنجاح", fill=(46, 204, 113), font=font_small)
+    # Footer Branding
+    draw.text((40, 225), f"السيرفر: {member.guild.name}", fill=(150, 150, 150), font=font_small)
 
     buffer = io.BytesIO()
-    card.save(buffer, format="PNG")
+    img.save(buffer, format="PNG")
     buffer.seek(0)
-    return discord.File(buffer, filename="profile_card.png")
+    return buffer
 
+# ================= =================
+#  UI Components (Views, Selects & Buttons)
+# ================= =================
+class RatingView(discord.ui.View):
+    def __init__(self, staff_id, ticket_channel):
+        super().__init__(timeout=120)
+        self.staff_id = str(staff_id)
+        self.ticket_channel = ticket_channel
 
-# ------------------------- أزرار التحكم بالتذكرة -------------------------
+    @discord.ui.select(
+        placeholder="اختر تقييم الخدمة الإدارية...",
+        options=[
+            discord.SelectOption(label="⭐ 5 - ممتاز جداً", value="5"),
+            discord.SelectOption(label="⭐ 4 - جيد جداً", value="4"),
+            discord.SelectOption(label="⭐ 3 - متوسط", value="3"),
+            discord.SelectOption(label="⭐ 2 - سيئ", value="2"),
+            discord.SelectOption(label="⭐ 1 - سيئ جداً", value="1"),
+        ]
+    )
+    async def select_rating(self, interaction: discord.Interaction, select: discord.ui.Select):
+        rating = int(select.values[0])
+        stats = db_data["staff_stats"].get(self.staff_id, {"tickets": 0, "total_stars": 0, "ratings_count": 0})
+        stats["total_stars"] += rating
+        stats["ratings_count"] += 1
+        db_data["staff_stats"][self.staff_id] = stats
+        save_data(db_data)
 
-class TicketControlView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="إغلاق", emoji="🔒", style=discord.ButtonStyle.danger, custom_id="ticket_close")
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("🔒 جاري إغلاق التذكرة...")
+        await interaction.response.send_message("شكرًا لك على تقديم تقييمك! جاري إغلاق التكت وحذفه...", ephemeral=True)
         await asyncio.sleep(2)
         try:
-            async with aiosqlite.connect(DB_FILE) as db:
-                await db.execute("UPDATE tickets SET status='closed' WHERE channel_id=?", (interaction.channel_id,))
-                await db.commit()
-            await interaction.channel.delete()
-        except discord.Forbidden:
+            await self.ticket_channel.delete()
+        except discord.NotFound:
             pass
 
-    @discord.ui.button(label="إضافة", emoji="➕", style=discord.ButtonStyle.success, custom_id="ticket_add")
+class TicketControlView(discord.ui.View):
+    def __init__(self, menu_type):
+        super().__init__(timeout=None)
+        self.menu_type = menu_type
+
+    @discord.ui.button(label="إضافة عضو", style=discord.ButtonStyle.secondary, custom_id="add_member")
     async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("➕ لإضافة عضو، اكتب المنشن الخاص به.", ephemeral=True)
+        await interaction.response.send_message("من فضلك أرسل منشن العضو المُراد إضافته للتكت في شات التكت.", ephemeral=True)
 
-    @discord.ui.button(label="إزالة", emoji="➖", style=discord.ButtonStyle.secondary, custom_id="ticket_remove")
+    @discord.ui.button(label="إزالة عضو", style=discord.ButtonStyle.secondary, custom_id="remove_member")
     async def remove_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("➖ لإزالة عضو من التذكرة.", ephemeral=True)
+        await interaction.response.send_message("من فضلك أرسل منشن العضو المُراد إزالته من التكت في شات التكت.", ephemeral=True)
 
-    @discord.ui.button(label="تقييم", emoji="⭐", style=discord.ButtonStyle.primary, custom_id="ticket_rate")
-    async def rate_service(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("⭐ شكراً لتقييمك الخدمة! تم احتساب النجوم بنجاح.", ephemeral=True)
+    @discord.ui.button(label="إغلاق التكت 🔒", style=discord.ButtonStyle.danger, custom_id="close_ticket")
+    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
+        channel_id = str(interaction.channel.id)
+        ticket_info = db_data["active_tickets"].get(channel_id, {})
+        claimed_staff_id = ticket_info.get("staff_id")
 
+        if self.menu_type == "admin" and claimed_staff_id:
+            view = RatingView(staff_id=claimed_staff_id, ticket_channel=interaction.channel)
+            await interaction.response.send_message("يرجى تقييم خدمة الإداري قبل إغلاق التكت:", view=view)
+        else:
+            await interaction.response.send_message("جاري إغلاق التكت وحذفه نهائياً...")
+            await asyncio.sleep(2)
+            try:
+                await interaction.channel.delete()
+            except discord.NotFound:
+                pass
 
-# ------------------------- القائمة المنسدلة (المنيو) -------------------------
-
-class MainSelectMenu(discord.ui.Select):
-    def __init__(self):
+class MenuDropdown(discord.ui.Select):
+    def __init__(self, title, menu_type, allowed_role_ids, observer_role_ids):
+        self.title = title
+        self.menu_type = menu_type
+        self.allowed_role_ids = allowed_role_ids
+        self.observer_role_ids = observer_role_ids
         options = [
-            discord.SelectOption(label="فتح تذكرة دعم فني", value="tickets", description="للتواصل مع الإدارة وحل مشكلتك", emoji="🎫"),
-            discord.SelectOption(label="استفسارات عامة", value="inquiries", description="للاستفسار عن الخدمات والقوانين", emoji="❓"),
+            discord.SelectOption(label=f"فتح {title}", description="اضغط هنا للتواصل المباشر مع المسؤلين", emoji="🎟️")
         ]
         super().__init__(placeholder="اختر الخدمة المطلوبة من هنا...", min_values=1, max_values=1, options=options)
 
     async def callback(self, interaction: discord.Interaction):
         guild = interaction.guild
-        async with aiosqlite.connect(DB_FILE) as db:
-            cur = await db.execute(
-                "SELECT channel_id FROM tickets WHERE guild_id=? AND user_id=? AND status='open'",
-                (guild.id, interaction.user.id),
-            )
-            row = await cur.fetchone()
+        category = interaction.channel.category
 
-        if row and guild.get_channel(row[0]):
-            return await interaction.response.send_message(f"لديك تذكرة مفتوحة بالفعل: <#{row[0]}>", ephemeral=True)
+        ticket_count = len(db_data["active_tickets"]) + 1
+        clean_title = self.title.replace(" ", "-")
+        channel_name = f"{clean_title}-{ticket_count}"
 
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(view_channel=False),
-            interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True, read_message_history=True, attach_files=True),
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
         }
+        
+        # Allowed Handling Roles
+        for role_id in self.allowed_role_ids:
+            role = guild.get_role(role_id)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+            
+        # Supervisor/Observer Roles (Read and Send permission to step in if needed)
+        for role_id in self.observer_role_ids:
+            role = guild.get_role(role_id)
+            if role:
+                overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-        try:
-            channel = await guild.create_text_channel(
-                name=f"ticket-{interaction.user.name}"[:90],
-                overwrites=overwrites,
-            )
-            async with aiosqlite.connect(DB_FILE) as db:
-                await db.execute(
-                    "INSERT INTO tickets (guild_id,channel_id,user_id,created_at) VALUES(?,?,?,?)",
-                    (guild.id, channel.id, interaction.user.id, now()),
-                )
-                await db.commit()
+        ticket_channel = await guild.create_text_channel(
+            name=channel_name,
+            category=category,
+            overwrites=overwrites
+        )
 
-            await channel.send(
-                content=f"{interaction.user.mention}",
-                embed=embed("🎫 تذكرتك مفتوحة", "تفضل بطرح مشكلتك، واستخدم الأزرار أدناه للتحكم بالتذكرة (إغلاق، إضافة، إزالة، تقييم)."),
-                view=TicketControlView(),
-            )
-            await interaction.response.send_message(f"تم فتح تذكرتك بنجاح: {channel.mention}", ephemeral=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("لا أملك صلاحية إنشاء القنوات.", ephemeral=True)
+        db_data["active_tickets"][str(ticket_channel.id)] = {
+            "owner_id": interaction.user.id,
+            "staff_id": None,
+            "menu_type": self.menu_type,
+            "allowed_role_ids": self.allowed_role_ids,
+            "observer_role_ids": self.observer_role_ids
+        }
+        save_data(db_data)
 
+        embed = discord.Embed(
+            title=f"🎟️ مرحباً بك في {channel_name}",
+            description="الرجاء توضيح طلبك. سيتم تسليم التكت تلقائياً لأول إداري يقوم بالرد.",
+            color=discord.Color.blue()
+        )
+        view = TicketControlView(self.menu_type)
+        await ticket_channel.send(content=f"{interaction.user.mention}", embed=embed, view=view)
+        await interaction.response.send_message(f"تم إنشاء التكت الخاص بك بنجاح: {ticket_channel.mention}", ephemeral=True)
 
-class MainMenuView(discord.ui.View):
-    def __init__(self):
+class MenuDropdownView(discord.ui.View):
+    def __init__(self, title, menu_type, allowed_role_ids, observer_role_ids):
         super().__init__(timeout=None)
-        self.add_item(MainSelectMenu())
+        self.add_item(MenuDropdown(title, menu_type, allowed_role_ids, observer_role_ids))
 
+# ================= =================
+#  Event Handling (Message & Auto-Claim)
+# ================= =================
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
 
-# ------------------------- إعداد وتشغيل البوت -------------------------
+    # Check for !كشف in specific Kashf Channel or anywhere if not set
+    if message.content.startswith("!كشف"):
+        kashf_chan_id = db_data.get("kashf_channel_id")
+        if kashf_chan_id and message.channel.id != kashf_chan_id:
+            await message.channel.send(f"❌ هذا الأمر مخصص في روم الكشف المحدد فقط!", delete_after=5)
+            return
 
-bot = commands.Bot(command_prefix="!", intents=intents)
+        target = message.mentions[0] if message.mentions else message.author
+        stats = db_data["staff_stats"].get(str(target.id), {"tickets": 0, "total_stars": 0, "ratings_count": 0})
+        
+        tickets_count = stats["tickets"]
+        total_stars = stats["total_stars"]
+        ratings_count = stats["ratings_count"]
+        avg_rating = (total_stars / ratings_count) if ratings_count > 0 else 0.0
 
+        card_buffer = generate_profile_card(target, tickets_count, avg_rating, total_stars)
+        file = discord.File(fp=card_buffer, filename="profile_card.png")
+        
+        embed = discord.Embed(title=f"📊 بطاقة كشف أداء الإداري {target.display_name}", color=discord.Color.blue())
+        embed.set_image(url="attachment://profile_card.png")
+        await message.channel.send(file=file, embed=embed)
+        return
+
+    channel_id = str(message.channel.id)
+    if channel_id in db_data["active_tickets"]:
+        ticket_info = db_data["active_tickets"][channel_id]
+        
+        # Auto Claim on first staff message
+        if ticket_info["staff_id"] is None:
+            allowed_role_ids = ticket_info.get("allowed_role_ids", [])
+            is_staff = False
+
+            author_role_ids = [r.id for r in message.author.roles]
+            if any(role_id in author_role_ids for role_id in allowed_role_ids):
+                is_staff = True
+            elif message.author.guild_permissions.administrator:
+                is_staff = True
+
+            # If sender is valid staff and NOT the ticket creator
+            if is_staff and message.author.id != ticket_info["owner_id"]:
+                ticket_info["staff_id"] = message.author.id
+                db_data["active_tickets"][channel_id] = ticket_info
+                
+                # Update staff stats
+                staff_id_str = str(message.author.id)
+                stats = db_data["staff_stats"].get(staff_id_str, {"tickets": 0, "total_stars": 0, "ratings_count": 0})
+                stats["tickets"] += 1
+                db_data["staff_stats"][staff_id_str] = stats
+                save_data(db_data)
+
+                # Restrict permissions so other staff members cannot claim
+                guild = message.guild
+                for r_id in allowed_role_ids:
+                    role = guild.get_role(r_id)
+                    if role:
+                        await message.channel.set_permissions(role, read_messages=False)
+
+                await message.channel.set_permissions(message.author, read_messages=True, send_messages=True)
+
+                await message.channel.send(embed=discord.Embed(
+                    description=f"✅ **تم الاستلام تلقائياً من قبل الإداري:** {message.author.mention}\n🔒 تم قفل التكت ومنع باقي الإداريين من التدخل.",
+                    color=discord.Color.green()
+                ))
+
+    await bot.process_commands(message)
+
+# ================= =================
+#  Slash Commands Setup
+# ================= =================
+@bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي للتكتات والتقديم")
+@app_commands.describe(
+    العنوان="عنوان المنيو (مثال: تكتات الإدارة أو تقديم عصابات)",
+    الوصف="الوصف المكتوب تحت العنوان",
+    نوع_المنيو="نوع المنيو (إداري مع تقييم أو تقديم وعصابات بدون تقييم)",
+    رتب_الاستلام="منشن الرتب المسؤولة عن الاستلام",
+    رتب_الاطلاع="منشن الرتب المشرفة القادرة على الاطلاع (اختياري)"
+)
+@app_commands.choices(نوع_المنيو=[
+    app_commands.Choice(name="منيو إداري (يحتوي تقييم)", value="admin"),
+    app_commands.Choice(name="منيو عصابات وتقديم (بدون تقييم)", value="normal")
+])
+async def create_menu(
+    interaction: discord.Interaction, 
+    العنوان: str,
+    الوصف: str,
+    نوع_المنيو: app_commands.Choice[str], 
+    رتب_الاستلام: str,
+    رتب_الاطلاع: str = None
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("لا تملك صلاحية استخدام هذا الأمر.", ephemeral=True)
+        return
+
+    allowed_role_ids = [int(role_id) for role_id in رتب_الاستلام.replace("<@&", "").replace(">", "").split() if role_id.isdigit()]
+    
+    observer_role_ids = []
+    if رتب_الاطلاع:
+        observer_role_ids = [int(role_id) for role_id in رتب_الاطلاع.replace("<@&", "").replace(">", "").split() if role_id.isdigit()]
+
+    if not allowed_role_ids:
+        await interaction.response.send_message("❌ يرجى منشن رتبة استلام واحدة على الأقل بشكل صحيح.", ephemeral=True)
+        return
+
+    embed = discord.Embed(
+        title=العنوان,
+        description=الوصف,
+        color=discord.Color.gold()
+    )
+    view = MenuDropdownView(title=العنوان, menu_type=نوع_المنيو.value, allowed_role_ids=allowed_role_ids, observer_role_ids=observer_role_ids)
+    msg = await interaction.channel.send(embed=embed, view=view)
+    
+    # Save Menu Data for future edits
+    db_data["menus"][str(msg.id)] = {
+        "title": العنوان,
+        "description": الوصف,
+        "menu_type": نوع_المنيو.value,
+        "allowed_role_ids": allowed_role_ids,
+        "observer_role_ids": observer_role_ids
+    }
+    save_data(db_data)
+    
+    await interaction.response.send_message("✅ تم إرسال المنيو التفاعلي بنجاح!", ephemeral=True)
+
+@bot.tree.command(name="تعديل_منيو", description="تعديل عنوان أو وصف منيو قائم عبر آيدي الرسالة")
+@app_commands.describe(
+    آيدي_الرسالة="آيدي رسالة المنيو المُراد تعديله",
+    العنوان_الجديد="العنوان الجديد للمنيو",
+    الوصف_الجديد="الوصف الجديد للمنيو"
+)
+async def edit_menu(
+    interaction: discord.Interaction,
+    آيدي_الرسالة: str,
+    العنوان_الجديد: str,
+    الوصف_الجديد: str
+):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("لا تملك صلاحية استخدام هذا الأمر.", ephemeral=True)
+        return
+
+    try:
+        msg = await interaction.channel.fetch_message(int(آيدي_الرسالة))
+        embed = msg.embeds[0]
+        embed.title = العنوان_الجديد
+        embed.description = الوصف_الجديد
+        await msg.edit(embed=embed)
+        
+        if آيدي_الرسالة in db_data["menus"]:
+            db_data["menus"][آيدي_الرسالة]["title"] = العنوان_الجديد
+            db_data["menus"][آيدي_الرسالة]["description"] = الوصف_الجديد
+            save_data(db_data)
+
+        await interaction.response.send_message("✅ تم تعديل المنيو بنجاح!", ephemeral=True)
+    except Exception as e:
+        await interaction.response.send_message(f"❌ تعذر العثور على الرسالة في هذا الروم: {e}", ephemeral=True)
+
+@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر !كشف")
+@app_commands.describe(الروم="اختر الروم المخصص لأمر الكشف")
+async def set_kashf_channel(interaction: discord.Interaction, الروم: discord.TextChannel):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("لا تملك صلاحية استخدام هذا الأمر.", ephemeral=True)
+        return
+
+    db_data["kashf_channel_id"] = الروم.id
+    save_data(db_data)
+    await interaction.response.send_message(f"✅ تم تحديد {الروم.mention} كروم مخصص لأمر `!كشف` بنجاح!", ephemeral=True)
+
+@bot.command(name="متصدرين")
+async def leaderboard(ctx):
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("هذا الأمر مخصص للقادة والإدارة العليا فقط.")
+        return
+
+    sorted_staff = sorted(db_data["staff_stats"].items(), key=lambda x: x[1].get("tickets", 0), reverse=True)
+    
+    embed = discord.Embed(title="🏆 لوحة متصدرين استلام التكتات", color=discord.Color.gold())
+    description = ""
+    for idx, (staff_id, stats) in enumerate(sorted_staff[:10], start=1):
+        member = ctx.guild.get_member(int(staff_id))
+        name = member.mention if member else f"مستخدم ({staff_id})"
+        tickets = stats.get("tickets", 0)
+        stars = stats.get("total_stars", 0)
+        description += f"**#{idx}** | {name} - **التكتات:** `{tickets}` | **النجوم:** `⭐ {stars}`\n"
+
+    embed.description = description or "لا توجد إحصائيات مسجلة حتى الآن."
+    await ctx.send(embed=embed)
 
 @bot.event
 async def on_ready():
-    await init_db()
-    bot.add_view(MainMenuView())
-    bot.add_view(TicketControlView())
-    try:
-        synced = await bot.tree.sync()
-        log.info("Successfully synced %s commands", len(synced))
-    except Exception as e:
-        log.error("Failed to sync commands: %s", e)
-    log.info("Logged in as %s (%s)", bot.user, bot.user.id)
-
-
-# 1. أمر إنشاء المنيو
-@bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد في القناة الحالية")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def create_menu_cmd(interaction: discord.Interaction):
-    e = embed("✨ القائمة الرئيسية للسيرفر", "اختر من القائمة المنسدلة أدناه لفتح تذكرة والتواصل مع الإدارة:")
-    await interaction.channel.send(embed=e, view=MainMenuView())
-    await interaction.response.send_message("✅ تم إرسال المنيو التفاعلي بنجاح!", ephemeral=True)
-
-
-# 2. أمر تعديل المنيو
-@bot.tree.command(name="تعديل_منيو", description="إظهار لوحة تعديل المنيو الموجود في القناة")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def edit_menu_cmd(interaction: discord.Interaction):
-    e = embed("⚙️ إعدادات وتعديل المنيو", "يمكنك التحكم بخيارات المنيو وتحديثها من خلال هذه اللوحة.")
-    await interaction.response.send_message(embed=e, ephemeral=True)
-
-
-# 3. أمر تحديد روم الكشف
-@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر !كشف_للاداره فيه فقط")
-@app_commands.checks.has_permissions(manage_guild=True)
-async def set_kashf_channel(interaction: discord.Interaction, channel: discord.TextChannel):
-    await set_setting(interaction.guild_id, "kashf_channel_id", str(channel.id))
-    await interaction.response.send_message(f"✅ تم تحديد روم كشف الإدارة بنجاح: {channel.mention}", ephemeral=True)
-
-
-# 4. أمر !كشف_للاداره
-@bot.command(name="كشف_للاداره")
-async def kashf_admin(ctx, member: discord.Member = None):
-    allowed_channel_id = await setting(ctx.guild.id, "kashf_channel_id")
-    
-    if allowed_channel_id and ctx.channel.id != int(allowed_channel_id):
-        return await ctx.message.delete()
-
-    member = member or ctx.author
-    tickets = 15
-    avg = 4.9
-    total_stars = 75
-
-    file = await generate_profile_card(member, avg, total_stars, tickets)
-    e = embed(f"📊 كشف حساب الأداء للإداري: {member.display_name}")
-    e.set_image(url="attachment://profile_card.png")
-    
-    await ctx.send(embed=e, file=file)
-
+    await bot.tree.sync()
+    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
 
 if __name__ == "__main__":
     TOKEN = os.environ.get("DISCORD_TOKEN")
