@@ -76,33 +76,32 @@ class RatingView(discord.ui.View):
         except discord.NotFound:
             pass
 
-class AddMemberModal(discord.ui.Modal, title="➕ إضافة عضو للتكت"):
-    member_id = discord.ui.TextInput(label="آيدي أو منشن العضو", placeholder="مثال: 123456789012345678", required=True)
+class AddMemberSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        clean_id = self.member_id.value.strip().replace("<@", "").replace(">", "").replace("!", "")
-        try:
-            member = await interaction.guild.fetch_member(int(clean_id))
-        except Exception:
-            await interaction.response.send_message("❌ لم يتم العثور على هذا العضو بالسيرفر.", ephemeral=True)
-            return
-
+    @discord.ui.select(
+        cls=discord.ui.UserSelect,
+        placeholder="👥 اختر العضو الذي تريد إضافته للروم..."
+    )
+    async def select_member(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        member = select.values[0]
         await interaction.channel.set_permissions(member, read_messages=True, send_messages=True)
         await interaction.response.send_message(f"✅ تم بنجاح إضافة {member.mention} إلى هذا التكت.", ephemeral=False)
 
-class RemoveMemberModal(discord.ui.Modal, title="➖ إزالة عضو من التكت"):
-    member_id = discord.ui.TextInput(label="آيدي أو منشن العضو", placeholder="مثال: 123456789012345678", required=True)
+class RemoveMemberSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__(timeout=60)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        clean_id = self.member_id.value.strip().replace("<@", "").replace(">", "").replace("!", "")
-        try:
-            member = await interaction.guild.fetch_member(int(clean_id))
-        except Exception:
-            await interaction.response.send_message("❌ لم يتم العثور على هذا العضو بالسيرفر.", ephemeral=True)
-            return
-
+    @discord.ui.select(
+        cls=discord.ui.UserSelect,
+        placeholder="🚫 اختر العضو الذي تريد إزالته من الروم..."
+    )
+    async def select_member(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
+        member = select.values[0]
         ticket_info = db_data["active_tickets"].get(str(interaction.channel.id), {})
         owner_id = ticket_info.get("owner_id")
+        
         if member.id == owner_id:
             await interaction.response.send_message("❌ لا يمكنك إزالة صاحب التكت الأساسي!", ephemeral=True)
             return
@@ -117,38 +116,52 @@ class TicketControlView(discord.ui.View):
 
     @discord.ui.button(label="إضافة عضو ➕", style=discord.ButtonStyle.secondary, custom_id="add_member")
     async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        ticket_info = db_data["active_tickets"].get(str(interaction.channel.id), {})
-        staff_id = ticket_info.get("staff_id")
-        
-        is_admin = interaction.user.guild_permissions.administrator
-        is_owner = interaction.user.id == ticket_info.get("owner_id")
-        is_staff = interaction.user.id == staff_id
+        channel_id = str(interaction.channel.id)
+        ticket_info = db_data["active_tickets"].get(channel_id, {})
+        claimed_staff_id = ticket_info.get("staff_id")
+        allowed_role_ids = ticket_info.get("allowed_role_ids", [])
 
-        if not (is_admin or is_owner or is_staff):
-            await interaction.response.send_message("❌ ليس لديك صلاحية لإضافة أعضاء لهذا التكت.", ephemeral=True)
+        is_admin = interaction.user.guild_permissions.administrator
+        is_staff = interaction.user.id == claimed_staff_id
+        has_allowed_role = any(r.id in allowed_role_ids for r in interaction.user.roles)
+
+        if not (is_admin or is_staff or has_allowed_role):
+            await interaction.response.send_message("❌ لا يمكنك استخدام هذا الزر! الخيارات مخصصة للإدارة فقط.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(AddMemberModal())
+        await interaction.response.send_message("اختر العضو المراد إضافته من القائمة أدناه:", view=AddMemberSelectView(), ephemeral=True)
 
     @discord.ui.button(label="إزالة عضو ➖", style=discord.ButtonStyle.secondary, custom_id="remove_member")
     async def remove_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        ticket_info = db_data["active_tickets"].get(str(interaction.channel.id), {})
-        staff_id = ticket_info.get("staff_id")
-        
-        is_admin = interaction.user.guild_permissions.administrator
-        is_staff = interaction.user.id == staff_id
+        channel_id = str(interaction.channel.id)
+        ticket_info = db_data["active_tickets"].get(channel_id, {})
+        claimed_staff_id = ticket_info.get("staff_id")
+        allowed_role_ids = ticket_info.get("allowed_role_ids", [])
 
-        if not (is_admin or is_staff):
-            await interaction.response.send_message("❌ هذا الزر مخصص لإدارة التكت فقط.", ephemeral=True)
+        is_admin = interaction.user.guild_permissions.administrator
+        is_staff = interaction.user.id == claimed_staff_id
+        has_allowed_role = any(r.id in allowed_role_ids for r in interaction.user.roles)
+
+        if not (is_admin or is_staff or has_allowed_role):
+            await interaction.response.send_message("❌ لا يمكنك استخدام هذا الزر! الخيارات مخصصة للإدارة فقط.", ephemeral=True)
             return
 
-        await interaction.response.send_modal(RemoveMemberModal())
+        await interaction.response.send_message("اختر العضو المراد إزالته من القائمة أدناه:", view=RemoveMemberSelectView(), ephemeral=True)
 
     @discord.ui.button(label="إغلاق التكت 🔒", style=discord.ButtonStyle.danger, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
         channel_id = str(interaction.channel.id)
         ticket_info = db_data["active_tickets"].get(channel_id, {})
         claimed_staff_id = ticket_info.get("staff_id")
+        allowed_role_ids = ticket_info.get("allowed_role_ids", [])
+
+        is_admin = interaction.user.guild_permissions.administrator
+        is_staff = interaction.user.id == claimed_staff_id
+        has_allowed_role = any(r.id in allowed_role_ids for r in interaction.user.roles)
+
+        if not (is_admin or is_staff or has_allowed_role):
+            await interaction.response.send_message("❌ لا يمكنك إغلاق التكت! زر الإغلاق مخصص للإدارة فقط.", ephemeral=True)
+            return
 
         if self.menu_type == "admin" and claimed_staff_id:
             view = RatingView(staff_id=claimed_staff_id, ticket_channel=interaction.channel)
@@ -172,6 +185,18 @@ class InteractiveTicketButton(discord.ui.Button):
         self.observer_role_ids = observer_role_ids
 
     async def callback(self, interaction: discord.Interaction):
+        user_id = interaction.user.id
+        
+        for ticket_id, ticket_data in db_data["active_tickets"].items():
+            if ticket_data.get("owner_id") == user_id and ticket_data.get("button_label") == self.label:
+                existing_channel = interaction.guild.get_channel(int(ticket_id))
+                if existing_channel:
+                    await interaction.response.send_message(
+                        f"❌ لديك تكت مفتوح بالفعل من هذا القسم: {existing_channel.mention}\nيرجى إنهاؤه أولاً قبل فتح تكت جديد بنفس الزر.",
+                        ephemeral=True
+                    )
+                    return
+
         guild = interaction.guild
         category = interaction.channel.category
 
@@ -199,6 +224,7 @@ class InteractiveTicketButton(discord.ui.Button):
             "owner_id": interaction.user.id,
             "staff_id": None,
             "menu_type": self.menu_type,
+            "button_label": self.label,
             "allowed_role_ids": self.allowed_role_ids,
             "observer_role_ids": self.observer_role_ids
         }
@@ -212,6 +238,7 @@ class InteractiveTicketButton(discord.ui.Button):
             color=discord.Color.gold()
         )
         view = TicketControlView(self.menu_type)
+        
         await ticket_channel.send(content=f"{interaction.user.mention}", embed=embed, view=view)
         await interaction.response.send_message(f"✅ تم إنشاء التكت بنجاح: {ticket_channel.mention}", ephemeral=True)
 
@@ -522,7 +549,7 @@ async def edit_menu(interaction: discord.Interaction, آيدي_الرسالة: s
     panel_view = MenuControlPanelView(آيدي_الرسالة)
     await interaction.response.send_message("🛠️ **لوحة التحكم والتعديل في المنيو:**", view=panel_view, ephemeral=True)
 
-@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر الكشف والمتصدرين")
+@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر الكشف ومتصدرين الإدارة")
 @app_commands.describe(الروم="اختر الروم المخصص لأوامر الكشف والمتصدرين")
 async def set_kashf_channel(interaction: discord.Interaction, الروم: discord.TextChannel):
     if not interaction.user.guild_permissions.administrator:
