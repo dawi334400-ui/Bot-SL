@@ -142,18 +142,73 @@ class RatingView(discord.ui.View):
         except discord.NotFound:
             pass
 
+class AddMemberModal(discord.ui.Modal, title="➕ إضافة عضو للتكت"):
+    member_id = discord.ui.TextInput(label="آيدي أو منشن العضو", placeholder="مثال: 123456789012345678", required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        clean_id = self.member_id.value.strip().replace("<@", "").replace(">", "").replace("!", "")
+        try:
+            member = await interaction.guild.fetch_member(int(clean_id))
+        except Exception:
+            await interaction.response.send_message("❌ لم يتم العثور على هذا العضو بالسيرفر تأكد من الآيدي الصحيح.", ephemeral=True)
+            return
+
+        await interaction.channel.set_permissions(member, read_messages=True, send_messages=True)
+        await interaction.response.send_message(f"✅ تم بنجاح إضافة {member.mention} إلى هذا التكت.", ephemeral=False)
+
+class RemoveMemberModal(discord.ui.Modal, title="➖ إزالة عضو من التكت"):
+    member_id = discord.ui.TextInput(label="آيدي أو منشن العضو", placeholder="مثال: 123456789012345678", required=True)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        clean_id = self.member_id.value.strip().replace("<@", "").replace(">", "").replace("!", "")
+        try:
+            member = await interaction.guild.fetch_member(int(clean_id))
+        except Exception:
+            await interaction.response.send_message("❌ لم يتم العثور على هذا العضو بالسيرفر.", ephemeral=True)
+            return
+
+        ticket_info = db_data["active_tickets"].get(str(interaction.channel.id), {})
+        owner_id = ticket_info.get("owner_id")
+        if member.id == owner_id:
+            await interaction.response.send_message("❌ لا يمكنك إزالة صاحب التكت الأساسي!", ephemeral=True)
+            return
+
+        await interaction.channel.set_permissions(member, overwrite=None)
+        await interaction.response.send_message(f"✅ تم إزالة صلاحيات {member.mention} من هذا التكت.", ephemeral=False)
+
 class TicketControlView(discord.ui.View):
     def __init__(self, menu_type):
         super().__init__(timeout=None)
         self.menu_type = menu_type
 
-    @discord.ui.button(label="إضافة عضو", style=discord.ButtonStyle.secondary, custom_id="add_member")
+    @discord.ui.button(label="إضافة عضو ➕", style=discord.ButtonStyle.secondary, custom_id="add_member")
     async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("من فضلك أرسل منشن العضو المُراد إضافته للتكت في شات التكت.", ephemeral=True)
+        ticket_info = db_data["active_tickets"].get(str(interaction.channel.id), {})
+        staff_id = ticket_info.get("staff_id")
+        
+        is_admin = interaction.user.guild_permissions.administrator
+        is_owner = interaction.user.id == ticket_info.get("owner_id")
+        is_staff = interaction.user.id == staff_id
 
-    @discord.ui.button(label="إزالة عضو", style=discord.ButtonStyle.secondary, custom_id="remove_member")
+        if not (is_admin or is_owner or is_staff):
+            await interaction.response.send_message("❌ ليس لديك صلاحية لإضافة أعضاء لهذا التكت.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(AddMemberModal())
+
+    @discord.ui.button(label="إزالة عضو ➖", style=discord.ButtonStyle.secondary, custom_id="remove_member")
     async def remove_member(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("من فضلك أرسل منشن العضو المُراد إزالته من التكت في شات التكت.", ephemeral=True)
+        ticket_info = db_data["active_tickets"].get(str(interaction.channel.id), {})
+        staff_id = ticket_info.get("staff_id")
+        
+        is_admin = interaction.user.guild_permissions.administrator
+        is_staff = interaction.user.id == staff_id
+
+        if not (is_admin or is_staff):
+            await interaction.response.send_message("❌ هذا الزر مخصص لإدارة التكت فقط.", ephemeral=True)
+            return
+
+        await interaction.response.send_modal(RemoveMemberModal())
 
     @discord.ui.button(label="إغلاق التكت 🔒", style=discord.ButtonStyle.danger, custom_id="close_ticket")
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -168,6 +223,8 @@ class TicketControlView(discord.ui.View):
             await interaction.response.send_message("جاري إغلاق التكت وحذفه نهائياً...")
             await asyncio.sleep(2)
             try:
+                db_data["active_tickets"].pop(channel_id, None)
+                save_data(db_data)
                 await interaction.channel.delete()
             except discord.NotFound:
                 pass
@@ -514,19 +571,19 @@ async def set_kashf_channel(interaction: discord.Interaction, الروم: discor
         return
     db_data["kashf_channel_id"] = الروم.id
     save_data(db_data)
-    await interaction.response.send_message(f"✅ تم تحديد {الروم.mention} كروم مخصص لأمر `/كشف` بنجاح!", ephemeral=True)
+    await interaction.response.send_message(f"✅ تم تحديد {الروم.mention} كروم مخصص لأمر `!كشف` بنجاح!", ephemeral=True)
 
-@bot.tree.command(name="كشف", description="عرض بطاقة وإحصائيات أداء الإداري")
-@app_commands.describe(المستخدم="اختر الإداري المراد عرض كشف إحصائياته (اختياري)")
-async def kashf_slash(interaction: discord.Interaction, المستخدم: discord.Member = None):
-    # تم تعديل شرط التحقق: إذا تم تحديد روم كشف، وتجاوز المستخدم شرط الروم أو صلاحية الأدمن يتم السماح، 
-    # لكن للسماح للأدمن بفحص الكشف بأي مكان أو في الروم المخصص سنقوم بتعديلها لتكون مرنة:
+@bot.command(name="كشف")
+async def kashf_prefix(ctx, member: discord.Member = None):
     kashf_chan_id = db_data.get("kashf_channel_id")
-    if kashf_chan_id and interaction.channel.id != kashf_chan_id and not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message(f"❌ هذا الأمر مخصص للاستخدام في روم الكشف المخصص فقط!", ephemeral=True)
+    if kashf_chan_id and ctx.channel.id != kashf_chan_id:
+        try:
+            await ctx.message.delete()
+        except Exception:
+            pass
         return
 
-    target = المستخدم if المستخدم else interaction.user
+    target = member if member else ctx.author
     stats = db_data["staff_stats"].get(str(target.id), {
         "tickets": 0, "total_stars": 0, "ratings_count": 0, "ratings_list": []
     })
@@ -546,13 +603,12 @@ async def kashf_slash(interaction: discord.Interaction, المستخدم: discor
     except Exception:
         pass
 
-    await interaction.response.defer()
     card_buffer = generate_profile_card(target, tickets_count, total_stars, most_frequent_rating, avatar_bytes)
     file = discord.File(fp=card_buffer, filename="profile_card.png")
 
     embed = discord.Embed(title=f"👑 بطاقة كشف أداء الإداري: {target.display_name}", color=discord.Color.gold())
     embed.set_image(url="attachment://profile_card.png")
-    await interaction.followup.send(file=file, embed=embed)
+    await ctx.send(file=file, embed=embed)
 
 @bot.tree.command(name="متصدرين", description="عرض لوحة متصدرين أداء الإداريين واستلام التكتات")
 async def leaderboard_slash(interaction: discord.Interaction):
@@ -598,6 +654,7 @@ async def on_message(message: discord.Message):
                 stats = db_data["staff_stats"].get(staff_id_str, {
                     "tickets": 0, "total_stars": 0, "ratings_count": 0, "ratings_list": []
                 })
+
                 stats["tickets"] += 1
                 db_data["staff_stats"][staff_id_str] = stats
                 save_data(db_data)
@@ -622,6 +679,12 @@ async def on_message(message: discord.Message):
                 ))
 
     await bot.process_commands(message)
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    raise error
 
 @bot.event
 async def on_ready():
