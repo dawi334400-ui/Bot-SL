@@ -66,22 +66,18 @@ def generate_profile_card(member, tickets_count, total_stars, most_frequent_rati
     draw.text((40, 30), f"👑 بطاقة كشف وإحصائيات أداء الإداري", fill=gold_accent, font=font_title)
     draw.line([(40, 70), (width - 40, 70)], fill=(50, 60, 80), width=2)
 
-    # Box 1
     draw.rounded_rectangle([40, 95, 380, 235], radius=15, fill=box_bg, outline=(55, 65, 85), width=1)
     draw.text((60, 110), "📊 إجمالي التكتات المستلمة", fill=text_gray, font=font_sub)
     draw.text((60, 150), f"{tickets_count} تكت", fill=text_white, font=font_large)
 
-    # Box 2
     draw.rounded_rectangle([420, 95, 760, 235], radius=15, fill=box_bg, outline=(55, 65, 85), width=1)
     draw.text((440, 110), "⭐ مجموع تقييم النجوم التوتل", fill=text_gray, font=font_sub)
     draw.text((440, 150), f"{total_stars} نجمة", fill=gold_accent, font=font_large)
 
-    # Box 3
     draw.rounded_rectangle([40, 255, 380, 395], radius=15, fill=box_bg, outline=(55, 65, 85), width=1)
     draw.text((60, 270), "🏆 أعلى تقييم متكرر ياخذه", fill=text_gray, font=font_sub)
     draw.text((60, 310), f"⭐ {most_frequent_rating}", fill=(76, 175, 80), font=font_large)
 
-    # Box 4
     draw.rounded_rectangle([420, 255, 760, 395], radius=15, fill=box_bg, outline=gold_accent, width=1)
     draw.text((440, 270), "👤 الإداري المسجل", fill=text_gray, font=font_sub)
     draw.text((440, 305), f"{member.display_name}", fill=text_white, font=font_bold)
@@ -149,11 +145,11 @@ class TicketControlView(discord.ui.View):
         super().__init__(timeout=None)
         self.menu_type = menu_type
 
-    @discord.ui.button(label="إضافة عضو", style=discord.ButtonStyle.secondary, custom_id="add_member")
+    @discord.ui.button(label="إضافة عضو 👤", style=discord.ButtonStyle.secondary, custom_id="add_member")
     async def add_member(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("من فضلك أرسل منشن العضو المُراد إضافته للتكت في شات التكت.", ephemeral=True)
 
-    @discord.ui.button(label="إزالة عضو", style=discord.ButtonStyle.secondary, custom_id="remove_member")
+    @discord.ui.button(label="إزالة عضو ❌", style=discord.ButtonStyle.secondary, custom_id="remove_member")
     async def remove_member(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("من فضلك أرسل منشن العضو المُراد إزالته من التكت في شات التكت.", ephemeral=True)
 
@@ -174,30 +170,20 @@ class TicketControlView(discord.ui.View):
             except discord.NotFound:
                 pass
 
-class DynamicMenuSelect(discord.ui.Select):
-    def __init__(self, options_list, menu_type, allowed_role_ids, observer_role_ids):
+class DynamicMenuButton(discord.ui.Button):
+    def __init__(self, label, menu_type, allowed_role_ids, observer_role_ids):
+        super().__init__(label=label, style=discord.ButtonStyle.primary, emoji="🎟️")
+        self.label_name = label
         self.menu_type = menu_type
         self.allowed_role_ids = allowed_role_ids
         self.observer_role_ids = observer_role_ids
-        
-        select_options = []
-        for opt in options_list:
-            select_options.append(
-                discord.SelectOption(
-                    label=opt["label"],
-                    description=opt.get("description", "اضغط هنا للفتح مباشرة"),
-                    emoji=opt.get("emoji", "🎟️")
-                )
-            )
-        super().__init__(placeholder="اختر الخدمة أو قسم التقديم من القائمة...", min_values=1, max_values=1, options=select_options)
 
     async def callback(self, interaction: discord.Interaction):
-        selected_label = self.values[0]
         guild = interaction.guild
         category = interaction.channel.category
 
         ticket_count = len(db_data["active_tickets"]) + 1
-        clean_title = selected_label.replace(" ", "-")
+        clean_title = self.label_name.replace(" ", "-")
         channel_name = f"{clean_title}-{ticket_count}"
 
         overwrites = {
@@ -242,13 +228,15 @@ class DynamicMenuSelect(discord.ui.Select):
 class DynamicMenuView(discord.ui.View):
     def __init__(self, options_list, menu_type, allowed_role_ids, observer_role_ids):
         super().__init__(timeout=None)
-        self.add_item(DynamicMenuSelect(options_list, menu_type, allowed_role_ids, observer_role_ids))
+        for opt in options_list:
+            btn_label = opt if isinstance(opt, str) else opt.get("label", "فتح تكت")
+            self.add_item(DynamicMenuButton(btn_label, menu_type, allowed_role_ids, observer_role_ids))
 
 class CreateMenuModal(discord.ui.Modal, title="✨ لوحة إعداد المنيو وتصميمه"):
     عنوان_المنيو = discord.ui.TextInput(label="عنوان المنيو الرئيسي", placeholder="مثال: ⚜️ تكتات الدعم الفني والإدارة", required=True)
     الوصف_البايو = discord.ui.TextInput(label="البايو / الوصف الشارح", style=discord.TextStyle.paragraph, placeholder="أكتب البايو والتعليمات هنا...", required=True)
     خيارات_المنيو = discord.ui.TextInput(
-        label="الأزرار/الخيارات (افصل بـ | بين الخيارات)",
+        label="الأزرار (افصل بـ | بين أسماء الأزرار)",
         style=discord.TextStyle.paragraph,
         placeholder="مثال: شكوى دكاتره | تقديم عصابات | استفسار عام",
         required=True
@@ -262,11 +250,7 @@ class CreateMenuModal(discord.ui.Modal, title="✨ لوحة إعداد المن�
 
     async def on_submit(self, interaction: discord.Interaction):
         raw_options = self.خيارات_المنيو.value.split("|")
-        options_list = []
-        for opt in raw_options:
-            cleaned = opt.strip()
-            if cleaned:
-                options_list.append({"label": cleaned, "description": "اضغط للفتح مباشرة", "emoji": "🎟️"})
+        options_list = [opt.strip() for opt in raw_options if opt.strip()]
 
         embed = discord.Embed(
             title=self.عنوان_المنيو.value,
@@ -286,13 +270,13 @@ class CreateMenuModal(discord.ui.Modal, title="✨ لوحة إعداد المن�
         }
         save_data(db_data)
 
-        await interaction.response.send_message("✅ تم إنشاء المنيو واللوحة التفاعلية بنجاح!", ephemeral=True)
+        await interaction.response.send_message("✅ تم إنشاء المنيو بالأزرار التفاعلية بنجاح!", ephemeral=True)
 
-class EditMenuModal(discord.ui.Modal, title="✏️ تعديل المنيو والخيارات"):
+class EditMenuModal(discord.ui.Modal, title="✏️ تعديل المنيو والأزرار"):
     العنوان_الجديد = discord.ui.TextInput(label="العنوان الجديد", required=True)
     الوصف_الجديد = discord.ui.TextInput(label="البايو / الوصف الجديد", style=discord.TextStyle.paragraph, required=True)
     الخيارات_الجديدة = discord.ui.TextInput(
-        label="تحديث الأزرار/الخيارات (مفصولة بـ |)",
+        label="تحديث الأزرار (مفصولة بـ |)",
         style=discord.TextStyle.paragraph,
         required=True
     )
@@ -307,11 +291,7 @@ class EditMenuModal(discord.ui.Modal, title="✏️ تعديل المنيو وا
             menu_info = db_data["menus"].get(self.message_id, {})
 
             raw_options = self.الخيارات_الجديدة.value.split("|")
-            options_list = []
-            for opt in raw_options:
-                cleaned = opt.strip()
-                if cleaned:
-                    options_list.append({"label": cleaned, "description": "اضغط للفتح مباشرة", "emoji": "🎟️"})
+            options_list = [opt.strip() for opt in raw_options if opt.strip()]
 
             embed = msg.embeds[0]
             embed.title = self.العنوان_الجديد.value
