@@ -6,11 +6,7 @@ import json
 import asyncio
 from PIL import Image, ImageDraw, ImageFont
 import io
-import requests
 
-# ================= =================
-#  Discord Intents and Bot Setup
-# ================= =================
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -19,9 +15,6 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 DATA_FILE = "bot_data.json"
 
-# ================= =================
-#  Database Helper Functions
-# ================= =================
 def load_data():
     if os.path.exists(DATA_FILE):
         try:
@@ -45,10 +38,7 @@ def save_data(data):
 
 db_data = load_data()
 
-# ================= =================
-#  Profile Card Generation Logic (HD 800x450)
-# ================= =================
-def generate_profile_card(member, tickets_count, total_stars, most_frequent_rating):
+def generate_profile_card(member, tickets_count, total_stars, most_frequent_rating, avatar_bytes=None):
     width, height = 800, 450
     bg_color = (15, 17, 23)
     card_bg = (24, 28, 38)
@@ -60,7 +50,6 @@ def generate_profile_card(member, tickets_count, total_stars, most_frequent_rati
     img = Image.new("RGBA", (width, height), bg_color)
     draw = ImageDraw.Draw(img)
 
-    # Outer Frame & Border Accent
     draw.rounded_rectangle([15, 15, width - 15, height - 15], radius=20, fill=card_bg, outline=gold_accent, width=2)
 
     try:
@@ -74,49 +63,43 @@ def generate_profile_card(member, tickets_count, total_stars, most_frequent_rati
         font_sub = ImageFont.load_default()
         font_bold = ImageFont.load_default()
 
-    # Header Title
     draw.text((40, 30), f"👑 بطاقة كشف وإحصائيات أداء الإداري", fill=gold_accent, font=font_title)
     draw.line([(40, 70), (width - 40, 70)], fill=(50, 60, 80), width=2)
 
-    # ---------------- 4 MAIN BOXES DESIGN ----------------
-    # Box 1: Total Tickets
+    # Box 1
     draw.rounded_rectangle([40, 95, 380, 235], radius=15, fill=box_bg, outline=(55, 65, 85), width=1)
     draw.text((60, 110), "📊 إجمالي التكتات المستلمة", fill=text_gray, font=font_sub)
     draw.text((60, 150), f"{tickets_count} تكت", fill=text_white, font=font_large)
 
-    # Box 2: Total Stars Rating
+    # Box 2
     draw.rounded_rectangle([420, 95, 760, 235], radius=15, fill=box_bg, outline=(55, 65, 85), width=1)
     draw.text((440, 110), "⭐ مجموع تقييم النجوم التوتل", fill=text_gray, font=font_sub)
     draw.text((440, 150), f"{total_stars} نجمة", fill=gold_accent, font=font_large)
 
-    # Box 3: Most Frequent Rating
+    # Box 3
     draw.rounded_rectangle([40, 255, 380, 395], radius=15, fill=box_bg, outline=(55, 65, 85), width=1)
     draw.text((60, 270), "🏆 أعلى تقييم متكرر ياخذه", fill=text_gray, font=font_sub)
     draw.text((60, 310), f"⭐ {most_frequent_rating}", fill=(76, 175, 80), font=font_large)
 
-    # Box 4: Admin Identity & Server Logo Branding
+    # Box 4
     draw.rounded_rectangle([420, 255, 760, 395], radius=15, fill=box_bg, outline=gold_accent, width=1)
     draw.text((440, 270), "👤 الإداري المسجل", fill=text_gray, font=font_sub)
     draw.text((440, 305), f"{member.display_name}", fill=text_white, font=font_bold)
     draw.text((440, 345), f"سيرفر: {member.guild.name}", fill=gold_accent, font=font_sub)
 
-    # Fetch Avatar image if available
-    try:
-        avatar_url = member.display_avatar.url
-        resp = requests.get(avatar_url)
-        avatar_img = Image.open(io.BytesIO(resp.content)).convert("RGBA")
-        avatar_img = avatar_img.resize((70, 70))
-        
-        # Make avatar circular
-        mask = Image.new('L', (70, 70), 0)
-        mask_draw = ImageDraw.Draw(mask)
-        mask_draw.ellipse((0, 0, 70, 70), fill=255)
-        
-        img.paste(avatar_img, (670, 290), mask)
-    except Exception as e:
-        print(f"Could not load avatar: {e}")
+    if avatar_bytes:
+        try:
+            avatar_img = Image.open(io.BytesIO(avatar_bytes)).convert("RGBA")
+            avatar_img = avatar_img.resize((70, 70))
+            
+            mask = Image.new('L', (70, 70), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.ellipse((0, 0, 70, 70), fill=255)
+            
+            img.paste(avatar_img, (670, 290), mask)
+        except Exception as e:
+            print(f"Could not load avatar: {e}")
 
-    # Footer
     draw.text((40, 410), "نظام التكتات والكشف الإداري المتقدم", fill=(100, 110, 130), font=font_sub)
 
     buffer = io.BytesIO()
@@ -124,9 +107,6 @@ def generate_profile_card(member, tickets_count, total_stars, most_frequent_rati
     buffer.seek(0)
     return buffer
 
-# ================= =================
-#  UI Views and Control Modals
-# ================= =================
 class RatingView(discord.ui.View):
     def __init__(self, staff_id, ticket_channel):
         super().__init__(timeout=120)
@@ -264,7 +244,6 @@ class DynamicMenuView(discord.ui.View):
         super().__init__(timeout=None)
         self.add_item(DynamicMenuSelect(options_list, menu_type, allowed_role_ids, observer_role_ids))
 
-# Modal popup window for creating menu title, bio, and buttons
 class CreateMenuModal(discord.ui.Modal, title="✨ لوحة إعداد المنيو وتصميمه"):
     عنوان_المنيو = discord.ui.TextInput(label="عنوان المنيو الرئيسي", placeholder="مثال: ⚜️ تكتات الدعم الفني والإدارة", required=True)
     الوصف_البايو = discord.ui.TextInput(label="البايو / الوصف الشارح", style=discord.TextStyle.paragraph, placeholder="أكتب البايو والتعليمات هنا...", required=True)
@@ -309,7 +288,6 @@ class CreateMenuModal(discord.ui.Modal, title="✨ لوحة إعداد المن�
 
         await interaction.response.send_message("✅ تم إنشاء المنيو واللوحة التفاعلية بنجاح!", ephemeral=True)
 
-# Modal popup window for editing menu by message ID
 class EditMenuModal(discord.ui.Modal, title="✏️ تعديل المنيو والخيارات"):
     العنوان_الجديد = discord.ui.TextInput(label="العنوان الجديد", required=True)
     الوصف_الجديد = discord.ui.TextInput(label="البايو / الوصف الجديد", style=discord.TextStyle.paragraph, required=True)
@@ -319,12 +297,9 @@ class EditMenuModal(discord.ui.Modal, title="✏️ تعديل المنيو وا
         required=True
     )
 
-    def __init__(self, message_id, default_title="", default_desc="", default_opts=""):
+    def __init__(self, message_id):
         super().__init__()
         self.message_id = str(message_id)
-        self.العنوان_الجديد.default = default_title
-        self.الوصف_الجديد.default = default_desc
-        self.الخيارات_الجديدة.default = default_opts
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
@@ -360,15 +335,11 @@ class EditMenuModal(discord.ui.Modal, title="✏️ تعديل المنيو وا
         except Exception as e:
             await interaction.response.send_message(f"❌ حدث خطأ أثناء التعديل: {e}", ephemeral=True)
 
-# ================= =================
-#  Message Handling & Commands
-# ================= =================
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
         return
 
-    # Command !كشف
     if message.content.startswith("!كشف"):
         kashf_chan_id = db_data.get("kashf_channel_id")
         if kashf_chan_id and message.channel.id != kashf_chan_id:
@@ -389,7 +360,13 @@ async def on_message(message: discord.Message):
         else:
             most_frequent_rating = "لا يوجد تقييمات"
 
-        card_buffer = generate_profile_card(target, tickets_count, total_stars, most_frequent_rating)
+        avatar_bytes = None
+        try:
+            avatar_bytes = await target.display_avatar.read()
+        except Exception as e:
+            print(f"Failed to read avatar bytes: {e}")
+
+        card_buffer = generate_profile_card(target, tickets_count, total_stars, most_frequent_rating, avatar_bytes)
         file = discord.File(fp=card_buffer, filename="profile_card.png")
 
         embed = discord.Embed(title=f"👑 بطاقة كشف أداء الإداري: {target.display_name}", color=discord.Color.gold())
@@ -438,9 +415,6 @@ async def on_message(message: discord.Message):
 
     await bot.process_commands(message)
 
-# ================= =================
-#  Slash Commands Setup
-# ================= =================
 @bot.tree.command(name="إنشاء_منيو", description="فتح لوحة الأزرار التفاعلية لتصميم المنيو والبايو والخيارات")
 @app_commands.describe(
     نوع_المنيو="نوع المنيو (إداري مع تقييم أو تقديم/عصابات بدون تقييم)",
@@ -484,18 +458,7 @@ async def edit_menu(interaction: discord.Interaction, آيدي_الرسالة: s
         await interaction.response.send_message("لا تملك صلاحية استخدام هذا الأمر.", ephemeral=True)
         return
 
-    menu_info = db_data["menus"].get(آيدي_الرسالة, {})
-    default_title = menu_info.get("title", "")
-    default_desc = menu_info.get("description", "")
-    existing_opts = [opt["label"] for opt in menu_info.get("options", [])]
-    default_opts = " | ".join(existing_opts)
-
-    modal = EditMenuModal(
-        message_id=آيدي_الرسالة,
-        default_title=default_title,
-        default_desc=default_desc,
-        default_opts=default_opts
-    )
+    modal = EditMenuModal(message_id=آيدي_الرسالة)
     await interaction.response.send_modal(modal)
 
 @bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر !كشف")
