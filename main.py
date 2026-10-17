@@ -233,48 +233,22 @@ class DynamicMenuView(discord.ui.View):
     def __init__(self, buttons_list, menu_type, allowed_role_ids, observer_role_ids):
         super().__init__(timeout=None)
         for btn in buttons_list:
+            # هنا يتم سحب الرتب الخاصة بكل زر بشكل مستقل (إذا وجدت)، وإلا يأخذ رتب المنيو العامة كافتراحي
+            btn_allowed = btn.get("allowed_role_ids", allowed_role_ids)
+            btn_observer = btn.get("observer_role_ids", observer_role_ids)
+            
             self.add_item(InteractiveTicketButton(
                 label=btn.get("label", "فتح تكت"),
                 emoji=btn.get("emoji") if btn.get("emoji") else None,
                 button_text=btn.get("text", ""),
                 menu_type=menu_type,
-                allowed_role_ids=allowed_role_ids,
-                observer_role_ids=observer_role_ids
+                allowed_role_ids=btn_allowed,
+                observer_role_ids=btn_observer
             ))
 
-class EditTitleModal(discord.ui.Modal, title="📝 تعديل العنوان"):
-    new_title = discord.ui.TextInput(label="العنوان الجديد للمنيو", required=True)
+# --- زر إضافة وتعديل الزر مع تحديد رتب الاستلام والإطلاع من القائمة ---
 
-    def __init__(self, message_id):
-        super().__init__()
-        self.message_id = message_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        menu_info = db_data["menus"].get(self.message_id)
-        if menu_info:
-            menu_info["title"] = self.new_title.value
-            db_data["menus"][self.message_id] = menu_info
-            save_data(db_data)
-            await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-            await interaction.response.send_message("✅ تم تعديل العنوان بنجاح!", ephemeral=True)
-
-class EditDescriptionModal(discord.ui.Modal, title="📄 تعديل الوصف"):
-    new_desc = discord.ui.TextInput(label="الوصف الجديد للمنيو", style=discord.TextStyle.paragraph, required=True)
-
-    def __init__(self, message_id):
-        super().__init__()
-        self.message_id = message_id
-
-    async def on_submit(self, interaction: discord.Interaction):
-        menu_info = db_data["menus"].get(self.message_id)
-        if menu_info:
-            menu_info["description"] = self.new_desc.value
-            db_data["menus"][self.message_id] = menu_info
-            save_data(db_data)
-            await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-            await interaction.response.send_message("✅ تم تعديل الوصف بنجاح!", ephemeral=True)
-
-class AddButtonModal(discord.ui.Modal, title="➕ إضافة زر جديد"):
+class AddButtonRoleSetupModal(discord.ui.Modal, title="➕ إضافة زر جديد مع رتبه"):
     btn_label = discord.ui.TextInput(label="عنوان الزر (اسم الزر)", placeholder="مثال: تقديم شرطة", required=True)
     btn_emoji = discord.ui.TextInput(label="إيموجي الزر (اختياري)", placeholder="مثال: 🚔", required=False)
     btn_text = discord.ui.TextInput(label="الرسالة والتعليمات داخل التكت", style=discord.TextStyle.paragraph, placeholder="أكتب الرسالة التي تظهر للعضو فور فتح هذا التكت...", required=False)
@@ -284,121 +258,65 @@ class AddButtonModal(discord.ui.Modal, title="➕ إضافة زر جديد"):
         self.message_id = message_id
 
     async def on_submit(self, interaction: discord.Interaction):
+        # بعد إدخال النصوص، نظهر له قوائم اختيار رتب الاستلام والاطلاع الخاصة بهذا الزر بالتحديد
+        view = ButtonRoleSelectView(self.message_id, self.btn_label.value, self.btn_emoji.value, self.btn_text.value)
+        await interaction.response.send_message("حدد الآن رتب الاستلام والاطلاع الخاصة **بهذا الزر** من القوائم بالأسفل:", view=view, ephemeral=True)
+
+class ButtonRoleSelectView(discord.ui.View):
+    def __init__(self, message_id, label, emoji, text):
+        super().__init__(timeout=180)
+        self.message_id = message_id
+        self.label = label
+        self.emoji = emoji
+        self.text = text
+        self.allowed_role_ids = []
+        self.observer_role_ids = []
+
+    @discord.ui.select(
+        cls=discord.ui.RoleSelect,
+        placeholder="اختر رتبة/رتب الاستلام لهذا الزر...",
+        min_values=1,
+        max_values=10,
+        row=0
+    )
+    async def select_allowed(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        self.allowed_role_ids = [r.id for r in select.values]
+        await interaction.response.send_message(f"✅ تم تحديد {len(self.allowed_role_ids)} رتبة للاستلام.", ephemeral=True)
+
+    @discord.ui.select(
+        cls=discord.ui.RoleSelect,
+        placeholder="اختر رتبة/رتب الاطلاع لهذا الزر (اختياري)...",
+        min_values=0,
+        max_values=10,
+        row=1
+    )
+    async def select_observer(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        self.observer_role_ids = [r.id for r in select.values]
+        await interaction.response.send_message(f"✅ تم تحديد {len(self.observer_role_ids)} رتبة للاطلاع.", ephemeral=True)
+
+    @discord.ui.button(label="حفظ وإضافة الزر النهائي ✨", style=discord.ButtonStyle.success, row=2)
+    async def confirm_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if not self.allowed_role_ids:
+            await interaction.response.send_message("❌ يجب اختيار رتبة استلام واحدة على الأقل!", ephemeral=True)
+            return
+
         menu_info = db_data["menus"].get(self.message_id)
         if menu_info:
             buttons = menu_info.get("buttons", [])
             buttons.append({
-                "label": self.btn_label.value,
-                "emoji": self.btn_emoji.value.strip() if self.btn_emoji.value else None,
-                "text": self.btn_text.value.strip() if self.btn_text.value else ""
+                "label": self.label,
+                "emoji": self.emoji.strip() if self.emoji else None,
+                "text": self.text.strip() if self.text else "",
+                "allowed_role_ids": self.allowed_role_ids,
+                "observer_role_ids": self.observer_role_ids
             })
             menu_info["buttons"] = buttons
             db_data["menus"][self.message_id] = menu_info
             save_data(db_data)
             await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-            await interaction.response.send_message(f"✅ تم إضافة الزر رقم (#{len(buttons)}) بنجاح وتحديث المنيو!", ephemeral=True)
+            await interaction.response.send_message("✅ تم إضافة الزر ورتبه بنجاح وتحديث القائمة!", ephemeral=True)
 
-class DeleteButtonSelect(discord.ui.Select):
-    def __init__(self, message_id, buttons):
-        self.message_id = message_id
-        options = [
-            discord.SelectOption(
-                label=f"زر رقم #{idx + 1}: {b['label']}",
-                value=str(idx),
-                emoji=b.get("emoji") if b.get("emoji") else None
-            )
-            for idx, b in enumerate(buttons)
-        ]
-        super().__init__(placeholder="اختر رقم الزر المُراد حذفه...", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        selected_index = int(self.values[0])
-        menu_info = db_data["menus"].get(self.message_id)
-        if menu_info and "buttons" in menu_info:
-            buttons = menu_info.get("buttons", [])
-            if 0 <= selected_index < len(buttons):
-                removed_btn = buttons.pop(selected_index)
-                menu_info["buttons"] = buttons
-                db_data["menus"][self.message_id] = menu_info
-                save_data(db_data)
-                await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-                await interaction.response.send_message(f"✅ تم حذف الزر رقم (#{selected_index + 1}) - ({removed_btn['label']}) بنجاح!", ephemeral=True)
-
-class DeleteButtonView(discord.ui.View):
-    def __init__(self, message_id, buttons):
-        super().__init__(timeout=60)
-        self.add_item(DeleteButtonSelect(message_id, buttons))
-
-class EditButtonDetailsModal(discord.ui.Modal, title="✏️ تعديل تفاصيل الزر"):
-    def __init__(self, message_id, button_index, current_btn):
-        super().__init__()
-        self.message_id = message_id
-        self.button_index = button_index
-        
-        self.btn_label = discord.ui.TextInput(
-            label="اسم الزر الجديد",
-            default=current_btn.get("label", ""),
-            required=True
-        )
-        self.btn_emoji = discord.ui.TextInput(
-            label="إيموجي الزر (اختياري)",
-            default=current_btn.get("emoji", "") or "",
-            required=False
-        )
-        self.btn_text = discord.ui.TextInput(
-            label="الرسالة والتعليمات داخل التكت",
-            style=discord.TextStyle.paragraph,
-            default=current_btn.get("text", ""),
-            required=False
-        )
-        
-        self.add_item(self.btn_label)
-        self.add_item(self.btn_emoji)
-        self.add_item(self.btn_text)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        menu_info = db_data["menus"].get(self.message_id)
-        if menu_info and "buttons" in menu_info:
-            buttons = menu_info.get("buttons", [])
-            if 0 <= self.button_index < len(buttons):
-                buttons[self.button_index] = {
-                    "label": self.btn_label.value,
-                    "emoji": self.btn_emoji.value.strip() if self.btn_emoji.value else None,
-                    "text": self.btn_text.value.strip() if self.btn_text.value else ""
-                }
-                menu_info["buttons"] = buttons
-                db_data["menus"][self.message_id] = menu_info
-                save_data(db_data)
-                await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-                await interaction.response.send_message(
-                    f"✅ تم تعديل الزر رقم (#{self.button_index + 1}) - ({self.btn_label.value}) بنجاح!",
-                    ephemeral=True
-                )
-
-class EditButtonSelect(discord.ui.Select):
-    def __init__(self, message_id, buttons):
-        self.message_id = message_id
-        self.buttons = buttons
-        options = [
-            discord.SelectOption(
-                label=f"زر رقم #{idx + 1}: {b['label']}",
-                value=str(idx),
-                emoji=b.get("emoji") if b.get("emoji") else None
-            )
-            for idx, b in enumerate(buttons)
-        ]
-        super().__init__(placeholder="اختر رقم الزر المُراد تعديله...", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        selected_index = int(self.values[0])
-        current_btn = self.buttons[selected_index]
-        modal = EditButtonDetailsModal(self.message_id, selected_index, current_btn)
-        await interaction.response.send_modal(modal)
-
-class EditButtonView(discord.ui.View):
-    def __init__(self, message_id, buttons):
-        super().__init__(timeout=60)
-        self.add_item(EditButtonSelect(message_id, buttons))
+# --- لوحة التحكم بالمنيو ---
 
 class MenuControlPanelView(discord.ui.View):
     def __init__(self, message_id):
@@ -415,7 +333,7 @@ class MenuControlPanelView(discord.ui.View):
 
     @discord.ui.button(label="إضافة زر ➕", style=discord.ButtonStyle.success, row=1)
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_modal(AddButtonModal(self.message_id))
+        await interaction.response.send_modal(AddButtonRoleSetupModal(self.message_id))
 
     @discord.ui.button(label="تعديل زر ✏️", style=discord.ButtonStyle.secondary, row=1)
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -438,17 +356,92 @@ class MenuControlPanelView(discord.ui.View):
     @discord.ui.button(label="تحديث المنيو 🔄", style=discord.ButtonStyle.success, row=2)
     async def refresh_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
         await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-        await interaction.response.send_message("✅ تم تحديث المنيو النهائي وإخلاء لوحة التعديل بنجاح!", ephemeral=True)
+        await interaction.response.send_message("✅ تم تحديث المنيو وإغلاق اللوحة بنجاح!", ephemeral=True)
         try:
             await interaction.message.delete()
         except Exception:
             pass
 
+class EditTitleModal(discord.ui.Modal, title="📝 تعديل العنوان"):
+    new_title = discord.ui.TextInput(label="العنوان الجديد للمنيو", required=True)
+    def __init__(self, message_id):
+        super().__init__()
+        self.message_id = message_id
+    async def on_submit(self, interaction: discord.Interaction):
+        menu_info = db_data["menus"].get(self.message_id)
+        if menu_info:
+            menu_info["title"] = self.new_title.value
+            db_data["menus"][self.message_id] = menu_info
+            save_data(db_data)
+            await update_menu_message(interaction.guild, interaction.channel, self.message_id)
+            await interaction.response.send_message("✅ تم تعديل العنوان بنجاح!", ephemeral=True)
+
+class EditDescriptionModal(discord.ui.Modal, title="📄 تعديل الوصف"):
+    new_desc = discord.ui.TextInput(label="الوصف الجديد للمنيو", style=discord.TextStyle.paragraph, required=True)
+    def __init__(self, message_id):
+        super().__init__()
+        self.message_id = message_id
+    async def on_submit(self, interaction: discord.Interaction):
+        menu_info = db_data["menus"].get(self.message_id)
+        if menu_info:
+            menu_info["description"] = self.new_desc.value
+            db_data["menus"][self.message_id] = menu_info
+            save_data(db_data)
+            await update_menu_message(interaction.guild, interaction.channel, self.message_id)
+            await interaction.response.send_message("✅ تم تعديل الوصف بنجاح!", ephemeral=True)
+
+class DeleteButtonSelect(discord.ui.Select):
+    def __init__(self, message_id, buttons):
+        self.message_id = message_id
+        options = [
+            discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=b.get("emoji"))
+            for idx, b in enumerate(buttons)
+        ]
+        super().__init__(placeholder="اختر رقم الزر المُراد حذفه...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_index = int(self.values[0])
+        menu_info = db_data["menus"].get(self.message_id)
+        if menu_info and "buttons" in menu_info:
+            buttons = menu_info.get("buttons", [])
+            if 0 <= selected_index < len(buttons):
+                removed = buttons.pop(selected_index)
+                menu_info["buttons"] = buttons
+                db_data["menus"][self.message_id] = menu_info
+                save_data(db_data)
+                await update_menu_message(interaction.guild, interaction.channel, self.message_id)
+                await interaction.response.send_message(f"✅ تم حذف الزر ({removed['label']}) بنجاح!", ephemeral=True)
+
+class DeleteButtonView(discord.ui.View):
+    def __init__(self, message_id, buttons):
+        super().__init__(timeout=60)
+        self.add_item(DeleteButtonSelect(message_id, buttons))
+
+class EditButtonSelect(discord.ui.Select):
+    def __init__(self, message_id, buttons):
+        self.message_id = message_id
+        self.buttons = buttons
+        options = [
+            discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=b.get("emoji"))
+            for idx, b in enumerate(buttons)
+        ]
+        super().__init__(placeholder="اختر رقم الزر المُراد تعديله...", options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        selected_index = int(self.values[0])
+        current_btn = self.buttons[selected_index]
+        view = ButtonRoleSelectView(self.message_id, current_btn.get("label"), current_btn.get("emoji"), current_btn.get("text"))
+        await interaction.response.send_message("عدل الرتب والإعدادات الخاصة بهذا الزر من القوائم أدناه:", view=view, ephemeral=True)
+
+class EditButtonView(discord.ui.View):
+    def __init__(self, message_id, buttons):
+        super().__init__(timeout=60)
+        self.add_item(EditButtonSelect(message_id, buttons))
+
 async def update_menu_message(guild, channel, message_id):
     menu_info = db_data["menus"].get(str(message_id))
     if not menu_info:
         return
-
     try:
         msg = await channel.fetch_message(int(message_id))
     except Exception:
@@ -470,33 +463,17 @@ async def update_menu_message(guild, channel, message_id):
 
     await msg.edit(embed=embed, view=view)
 
-@bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد مع لوحة أزرار التعديل")
-@app_commands.describe(
-    نوع_المنيو="نوع المنيو (إداري مع تقييم أو تقديم/عصابات بدون تقييم)",
-    رتب_الاستلام="منشن الرتب المسؤولة عن الاستلام",
-    رتب_الاطلاع="منشن الرتب المشرفة القادرة على الاطلاع (اختياري)"
-)
+# --- أوامر السلاش ---
+
+@bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد")
+@app_commands.describe(نوع_المنيو="نوع المنيو (إداري أو عصابات/تقديم)")
 @app_commands.choices(نوع_المنيو=[
     app_commands.Choice(name="منيو إداري (يحتوي تقييم)", value="admin"),
     app_commands.Choice(name="منيو عصابات وتقديم (بدون تقييم)", value="normal")
 ])
-async def create_menu(
-    interaction: discord.Interaction,
-    نوع_المنيو: app_commands.Choice[str],
-    رتب_الاستلام: str,
-    رتب_الاطلاع: str = None
-):
+async def create_menu(interaction: discord.Interaction, نوع_المنيو: app_commands.Choice[str]):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("لا تملك صلاحية استخدام هذا الأمر.", ephemeral=True)
-        return
-
-    allowed_role_ids = [int(r) for r in رتب_الاستلام.replace("<@&", "").replace(">", "").split() if r.isdigit()]
-    observer_role_ids = []
-    if رتب_الاطلاع:
-        observer_role_ids = [int(r) for r in رتب_الاطلاع.replace("<@&", "").replace(">", "").split() if r.isdigit()]
-
-    if not allowed_role_ids:
-        await interaction.response.send_message("❌ يرجى منشن رتبة استلام واحدة على الأقل بشكل صحيح.", ephemeral=True)
         return
 
     default_title = "مركز الدعم والمساعدة | Support Center"
@@ -511,20 +488,20 @@ async def create_menu(
         "description": default_desc,
         "buttons": [],
         "menu_type": نوع_المنيو.value,
-        "allowed_role_ids": allowed_role_ids,
-        "observer_role_ids": observer_role_ids
+        "allowed_role_ids": [],
+        "observer_role_ids": []
     }
     save_data(db_data)
 
     panel_view = MenuControlPanelView(msg_id)
     await interaction.response.send_message(
-        "تم إنشاء المنيو في هذه القناة. لوحة التعديل بالأسفل (مخفية للعامة):",
+        "✅ **تم إنشاء المنيو بنجاح!**\nقم بإضافة الأزرار وتحديد رتب الاستلام والإطلاع لكل زر عبر لوحة التحكم بالأسفل:",
         view=panel_view,
         ephemeral=True
     )
 
 @bot.tree.command(name="تعديل_منيو", description="فتح لوحة التحكم والتعديل لمنيو قائم عبر آيدي الرسالة")
-@app_commands.describe(آيدي_الرسالة="آيدي رسالة المنيو المُراد تعديله")
+@app_commands.describe(آيدي_الرسالة="آيدي رسالة المنيو المراد تعديله")
 async def edit_menu(interaction: discord.Interaction, آيدي_الرسالة: str):
     if not interaction.user.guild_permissions.administrator:
         await interaction.response.send_message("لا تملك صلاحية استخدام هذا الأمر.", ephemeral=True)
@@ -535,60 +512,76 @@ async def edit_menu(interaction: discord.Interaction, آيدي_الرسالة: s
         return
 
     panel_view = MenuControlPanelView(آيدي_الرسالة)
-    await interaction.response.send_message(
-        "🛠️ **لوحة التحكم والتعديل في المنيو:**",
-        view=panel_view,
-        ephemeral=True
-    )
+    await interaction.response.send_message("🛠️ **لوحة التحكم والتعديل في المنيو:**", view=panel_view, ephemeral=True)
 
-@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر !كشف")
+@bot.tree.command(name="تحديد_روم_الكشف", description="تحديد الروم المخصص لاستخدام أمر الكشف")
 @app_commands.describe(الروم="اختر الروم المخصص لأمر الكشف")
 async def set_kashf_channel(interaction: discord.Interaction, الروم: discord.TextChannel):
     if not interaction.user.guild_permissions.administrator:
-        await interaction.response.send_message("لا تملك صلاحية استخدام هذا الأمر.", ephemeral=True)
+        await interaction.response.send_message("لا تملك صلاحية.", ephemeral=True)
         return
-
     db_data["kashf_channel_id"] = الروم.id
     save_data(db_data)
-    await interaction.response.send_message(f"✅ تم تحديد {الروم.mention} كروم مخصص لأمر `!كشف` بنجاح!", ephemeral=True)
+    await interaction.response.send_message(f"✅ تم تحديد {الروم.mention} كروم مخصص لأمر `/كشف` بنجاح!", ephemeral=True)
+
+@bot.tree.command(name="كشف", description="عرض بطاقة وإحصائيات أداء الإداري")
+@app_commands.describe(المستخدم="اختر الإداري المراد عرض كشف إحصائياته (اختياري)")
+async def kashf_slash(interaction: discord.Interaction, المستخدم: discord.Member = None):
+    kashf_chan_id = db_data.get("kashf_channel_id")
+    if kashf_chan_id and interaction.channel.id != kashf_chan_id:
+        await interaction.response.send_message("❌ هذا الأمر مخصص في روم الكشف المحدد فقط!", ephemeral=True)
+        return
+
+    target = المستخدم if المستخدم else interaction.user
+    stats = db_data["staff_stats"].get(str(target.id), {
+        "tickets": 0, "total_stars": 0, "ratings_count": 0, "ratings_list": []
+    })
+
+    tickets_count = stats["tickets"]
+    total_stars = stats["total_stars"]
+    ratings_list = stats.get("ratings_list", [])
+
+    if ratings_list:
+        most_frequent_rating = f"{max(set(ratings_list), key=ratings_list.count)}/5"
+    else:
+        most_frequent_rating = "لا يوجد تقييمات"
+
+    avatar_bytes = None
+    try:
+        avatar_bytes = await target.display_avatar.read()
+    except Exception:
+        pass
+
+    await interaction.response.defer()
+    card_buffer = generate_profile_card(target, tickets_count, total_stars, most_frequent_rating, avatar_bytes)
+    file = discord.File(fp=card_buffer, filename="profile_card.png")
+
+    embed = discord.Embed(title=f"👑 بطاقة كشف أداء الإداري: {target.display_name}", color=discord.Color.gold())
+    embed.set_image(url="attachment://profile_card.png")
+    await interaction.followup.send(file=file, embed=embed)
+
+@bot.tree.command(name="متصدرين", description="عرض لوحة متصدرين أداء الإداريين واستلام التكتات")
+async def leaderboard_slash(interaction: discord.Interaction):
+    if not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message("مخصص للقادة فقط.", ephemeral=True)
+        return
+
+    sorted_staff = sorted(db_data["staff_stats"].items(), key=lambda x: x[1].get("tickets", 0), reverse=True)
+    embed = discord.Embed(title="🏆 لوحة متصدرين استلام التكتات", color=discord.Color.gold())
+    description = ""
+    for idx, (staff_id, stats) in enumerate(sorted_staff[:10], start=1):
+        member = interaction.guild.get_member(int(staff_id))
+        name = member.mention if member else f"مستخدم ({staff_id})"
+        tickets = stats.get("tickets", 0)
+        stars = stats.get("total_stars", 0)
+        description += f"**#{idx}** | {name} - **التكتات:** `{tickets}` | **النجوم:** `⭐ {stars}`\n"
+
+    embed.description = description or "لا توجد إحصائيات حتى الآن."
+    await interaction.response.send_message(embed=embed)
 
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
-        return
-
-    if message.content.startswith("!كشف"):
-        kashf_chan_id = db_data.get("kashf_channel_id")
-        if kashf_chan_id and message.channel.id != kashf_chan_id:
-            await message.channel.send(f"❌ هذا الأمر مخصص في روم الكشف المحدد فقط!", delete_after=5)
-            return
-
-        target = message.mentions[0] if message.mentions else message.author
-        stats = db_data["staff_stats"].get(str(target.id), {
-            "tickets": 0, "total_stars": 0, "ratings_count": 0, "ratings_list": []
-        })
-
-        tickets_count = stats["tickets"]
-        total_stars = stats["total_stars"]
-        ratings_list = stats.get("ratings_list", [])
-
-        if ratings_list:
-            most_frequent_rating = f"{max(set(ratings_list), key=ratings_list.count)}/5"
-        else:
-            most_frequent_rating = "لا يوجد تقييمات"
-
-        avatar_bytes = None
-        try:
-            avatar_bytes = await target.display_avatar.read()
-        except Exception as e:
-            print(f"Failed to read avatar bytes: {e}")
-
-        card_buffer = generate_profile_card(target, tickets_count, total_stars, most_frequent_rating, avatar_bytes)
-        file = discord.File(fp=card_buffer, filename="profile_card.png")
-
-        embed = discord.Embed(title=f"👑 بطاقة كشف أداء الإداري: {target.display_name}", color=discord.Color.gold())
-        embed.set_image(url="attachment://profile_card.png")
-        await message.channel.send(file=file, embed=embed)
         return
 
     channel_id = str(message.channel.id)
@@ -600,9 +593,7 @@ async def on_message(message: discord.Message):
             is_staff = False
 
             author_role_ids = [r.id for r in message.author.roles]
-            if any(role_id in author_role_ids for role_id in allowed_role_ids):
-                is_staff = True
-            elif message.author.guild_permissions.administrator:
+            if any(role_id in author_role_ids for role_id in allowed_role_ids) or message.author.guild_permissions.administrator:
                 is_staff = True
 
             if is_staff and message.author.id != ticket_info["owner_id"]:
@@ -624,33 +615,12 @@ async def on_message(message: discord.Message):
                         await message.channel.set_permissions(role, read_messages=False)
 
                 await message.channel.set_permissions(message.author, read_messages=True, send_messages=True)
-
                 await message.channel.send(embed=discord.Embed(
-                    description=f"✅ **تم الاستلام تلقائياً بواسطة:** {message.author.mention}\n🔒 تم قفل التكت ومنع باقي الإداريين من التدخل.",
+                    description=f"✅ **تم الاستلام تلقائياً بواسطة:** {message.author.mention}\n🔒 تم قفل التكت ومنع باقي الإداريين.",
                     color=discord.Color.green()
                 ))
 
     await bot.process_commands(message)
-
-@bot.command(name="متصدرين")
-async def leaderboard(ctx):
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("هذا الأمر مخصص للقادة والإدارة العليا فقط.")
-        return
-
-    sorted_staff = sorted(db_data["staff_stats"].items(), key=lambda x: x[1].get("tickets", 0), reverse=True)
-
-    embed = discord.Embed(title="🏆 لوحة متصدرين استلام التكتات", color=discord.Color.gold())
-    description = ""
-    for idx, (staff_id, stats) in enumerate(sorted_staff[:10], start=1):
-        member = ctx.guild.get_member(int(staff_id))
-        name = member.mention if member else f"مستخدم ({staff_id})"
-        tickets = stats.get("tickets", 0)
-        stars = stats.get("total_stars", 0)
-        description += f"**#{idx}** | {name} - **التكتات:** `{tickets}` | **النجوم:** `⭐ {stars}`\n"
-
-    embed.description = description or "لا توجد إحصائيات مسجلة حتى الآن."
-    await ctx.send(embed=embed)
 
 @bot.event
 async def on_ready():
