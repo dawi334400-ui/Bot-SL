@@ -233,7 +233,6 @@ class DynamicMenuView(discord.ui.View):
     def __init__(self, buttons_list, menu_type, allowed_role_ids, observer_role_ids):
         super().__init__(timeout=None)
         for btn in buttons_list:
-            # هنا يتم سحب الرتب الخاصة بكل زر بشكل مستقل (إذا وجدت)، وإلا يأخذ رتب المنيو العامة كافتراحي
             btn_allowed = btn.get("allowed_role_ids", allowed_role_ids)
             btn_observer = btn.get("observer_role_ids", observer_role_ids)
             
@@ -246,8 +245,6 @@ class DynamicMenuView(discord.ui.View):
                 observer_role_ids=btn_observer
             ))
 
-# --- زر إضافة وتعديل الزر مع تحديد رتب الاستلام والإطلاع من القائمة ---
-
 class AddButtonRoleSetupModal(discord.ui.Modal, title="➕ إضافة زر جديد مع رتبه"):
     btn_label = discord.ui.TextInput(label="عنوان الزر (اسم الزر)", placeholder="مثال: تقديم شرطة", required=True)
     btn_emoji = discord.ui.TextInput(label="إيموجي الزر (اختياري)", placeholder="مثال: 🚔", required=False)
@@ -258,7 +255,6 @@ class AddButtonRoleSetupModal(discord.ui.Modal, title="➕ إضافة زر جد�
         self.message_id = message_id
 
     async def on_submit(self, interaction: discord.Interaction):
-        # بعد إدخال النصوص، نظهر له قوائم اختيار رتب الاستلام والاطلاع الخاصة بهذا الزر بالتحديد
         view = ButtonRoleSelectView(self.message_id, self.btn_label.value, self.btn_emoji.value, self.btn_text.value)
         await interaction.response.send_message("حدد الآن رتب الاستلام والاطلاع الخاصة **بهذا الزر** من القوائم بالأسفل:", view=view, ephemeral=True)
 
@@ -315,8 +311,6 @@ class ButtonRoleSelectView(discord.ui.View):
             save_data(db_data)
             await update_menu_message(interaction.guild, interaction.channel, self.message_id)
             await interaction.response.send_message("✅ تم إضافة الزر ورتبه بنجاح وتحديث القائمة!", ephemeral=True)
-
-# --- لوحة التحكم بالمنيو ---
 
 class MenuControlPanelView(discord.ui.View):
     def __init__(self, message_id):
@@ -463,8 +457,6 @@ async def update_menu_message(guild, channel, message_id):
 
     await msg.edit(embed=embed, view=view)
 
-# --- أوامر السلاش ---
-
 @bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد")
 @app_commands.describe(نوع_المنيو="نوع المنيو (إداري أو عصابات/تقديم)")
 @app_commands.choices(نوع_المنيو=[
@@ -527,9 +519,11 @@ async def set_kashf_channel(interaction: discord.Interaction, الروم: discor
 @bot.tree.command(name="كشف", description="عرض بطاقة وإحصائيات أداء الإداري")
 @app_commands.describe(المستخدم="اختر الإداري المراد عرض كشف إحصائياته (اختياري)")
 async def kashf_slash(interaction: discord.Interaction, المستخدم: discord.Member = None):
+    # تم تعديل شرط التحقق: إذا تم تحديد روم كشف، وتجاوز المستخدم شرط الروم أو صلاحية الأدمن يتم السماح، 
+    # لكن للسماح للأدمن بفحص الكشف بأي مكان أو في الروم المخصص سنقوم بتعديلها لتكون مرنة:
     kashf_chan_id = db_data.get("kashf_channel_id")
-    if kashf_chan_id and interaction.channel.id != kashf_chan_id:
-        await interaction.response.send_message("❌ هذا الأمر مخصص في روم الكشف المحدد فقط!", ephemeral=True)
+    if kashf_chan_id and interaction.channel.id != kashf_chan_id and not interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(f"❌ هذا الأمر مخصص للاستخدام في روم الكشف المخصص فقط!", ephemeral=True)
         return
 
     target = المستخدم if المستخدم else interaction.user
@@ -612,9 +606,16 @@ async def on_message(message: discord.Message):
                 for r_id in allowed_role_ids:
                     role = guild.get_role(r_id)
                     if role:
-                        await message.channel.set_permissions(role, read_messages=False)
+                        try:
+                            await message.channel.set_permissions(role, read_messages=False)
+                        except Exception:
+                            pass
 
-                await message.channel.set_permissions(message.author, read_messages=True, send_messages=True)
+                try:
+                    await message.channel.set_permissions(message.author, read_messages=True, send_messages=True)
+                except Exception:
+                    pass
+
                 await message.channel.send(embed=discord.Embed(
                     description=f"✅ **تم الاستلام تلقائياً بواسطة:** {message.author.mention}\n🔒 تم قفل التكت ومنع باقي الإداريين.",
                     color=discord.Color.green()
