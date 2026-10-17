@@ -302,6 +302,7 @@ async def kashf_admin(ctx, member: discord.Member = None):
 
 
 if __name__ == "__main__":
+    TOKEN = os.environ.get("DISCORD_TOKEN")
     if not TOKEN:
         raise RuntimeError("Missing DISCORD_TOKEN environment variable.")
     bot.run(TOKEN)
