@@ -792,4 +792,4 @@ if __name__ == "__main__":
     if not TOKEN:
         raise RuntimeError("Missing DISCORD_TOKEN environment variable.")
     bot.run(TOKEN)
-```eof
+    eof
