@@ -194,7 +194,16 @@ class InteractiveTicketButton(discord.ui.Button):
     def __init__(self, label, emoji, button_text, menu_type, allowed_role_ids, observer_role_ids, btn_index=0, msg_id=""):
         cid = f"dyn_btn_{msg_id}_{btn_index}" if msg_id else f"dyn_btn_{btn_index}"
         
-        parsed_emoji = emoji if emoji and emoji.strip() else None
+        parsed_emoji = None
+        if emoji and isinstance(emoji, str) and emoji.strip():
+            e_str = emoji.strip()
+            if e_str.startswith("<a:") or e_str.startswith("<:"):
+                try:
+                    parsed_emoji = discord.PartialEmoji.from_str(e_str)
+                except Exception:
+                    parsed_emoji = None
+            else:
+                parsed_emoji = e_str
         
         super().__init__(label=label, emoji=parsed_emoji, style=discord.ButtonStyle.primary, custom_id=cid)
         self.button_text = button_text
@@ -292,7 +301,7 @@ class DynamicMenuView(discord.ui.View):
         super().__init__(timeout=None)
         for idx, btn in enumerate(buttons_list):
             emoji_val = btn.get("emoji")
-            if emoji_val and not emoji_val.strip():
+            if emoji_val and not str(emoji_val).strip():
                 emoji_val = None
 
             try:
@@ -520,7 +529,7 @@ class DeleteButtonSelect(discord.ui.Select):
         options = []
         for idx, b in enumerate(buttons):
             em = b.get("emoji")
-            if em and not em.strip():
+            if em and not str(em).strip():
                 em = None
             try:
                 options.append(discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=em))
@@ -555,7 +564,7 @@ class EditButtonSelect(discord.ui.Select):
         options = []
         for idx, b in enumerate(buttons):
             em = b.get("emoji")
-            if em and not em.strip():
+            if em and not str(em).strip():
                 em = None
             try:
                 options.append(discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=em))
@@ -611,15 +620,18 @@ async def update_menu_message(guild, channel, message_id):
         try:
             view = DynamicMenuView(buttons_list, menu_info.get("menu_type", "admin"), msg_id_str)
             bot.add_view(view)
-        except Exception as e:
+            await target_msg.edit(embed=embed, view=view)
+            return True, None
+        except Exception:
             for b in buttons_list:
                 b["emoji"] = None
             menu_info["buttons"] = buttons_list
             db_data["menus"][msg_id_str] = menu_info
             save_data(db_data)
+            
             view = DynamicMenuView(buttons_list, menu_info.get("menu_type", "admin"), msg_id_str)
             bot.add_view(view)
-
+            
     try:
         await target_msg.edit(embed=embed, view=view)
         return True, None
