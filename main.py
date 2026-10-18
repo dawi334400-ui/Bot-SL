@@ -7,7 +7,6 @@ import asyncio
 from datetime import datetime, timezone
 import logging
 
-# إعداد الـ Logging لإخفاء الرسائل الإعلامية (الحمراء) وجعل السجلات تظهر فقط عند وجود أخطاء حقيقية
 logging.basicConfig(level=logging.ERROR)
 
 intents = discord.Intents.default()
@@ -40,8 +39,6 @@ def save_data(data):
         print(f"Error saving {DATA_FILE}: {e}")
 
 db_data = load_data()
-
-# ==================== نظام التقييم الإداري ====================
 
 class RatingView(discord.ui.View):
     def __init__(self, staff_id, ticket_channel):
@@ -80,10 +77,8 @@ class RatingView(discord.ui.View):
             db_data["active_tickets"].pop(str(self.ticket_channel.id), None)
             save_data(db_data)
             await self.ticket_channel.delete()
-        except discord.NotFound:
+        except Exception:
             pass
-
-# ==================== القوائم المنسدلة لإضافة وإزالة الأعضاء ====================
 
 class AddMemberSelectView(discord.ui.View):
     def __init__(self):
@@ -120,8 +115,6 @@ class RemoveMemberSelectView(discord.ui.View):
         await interaction.channel.set_permissions(member, overwrite=None)
         await interaction.response.send_message(f"✅ تم إزالة صلاحيات {member.mention} من هذا التكت.", ephemeral=False)
 
-# ==================== لوحة التحكم الخاصة بالتكت (أزرار إدارة التكت) ====================
-
 class TicketControlView(discord.ui.View):
     def __init__(self, menu_type="admin"):
         super().__init__(timeout=None)
@@ -136,7 +129,7 @@ class TicketControlView(discord.ui.View):
 
         is_admin = interaction.user.guild_permissions.administrator
         is_staff = interaction.user.id == claimed_staff_id
-        has_allowed_role = any(r.id in allowed_role_ids for r in interaction.user.roles)
+        has_allowed_role = any(r.id in [int(rid) for rid in allowed_role_ids] for r in interaction.user.roles)
 
         if not (is_admin or is_staff or has_allowed_role):
             await interaction.response.send_message("❌ هذا الخيار مخصص للإدارة المعتمدة فقط.", ephemeral=True)
@@ -153,7 +146,7 @@ class TicketControlView(discord.ui.View):
 
         is_admin = interaction.user.guild_permissions.administrator
         is_staff = interaction.user.id == claimed_staff_id
-        has_allowed_role = any(r.id in allowed_role_ids for r in interaction.user.roles)
+        has_allowed_role = any(r.id in [int(rid) for rid in allowed_role_ids] for r in interaction.user.roles)
 
         if not (is_admin or is_staff or has_allowed_role):
             await interaction.response.send_message("❌ هذا الخيار مخصص للإدارة المعتمدة فقط.", ephemeral=True)
@@ -167,14 +160,14 @@ class TicketControlView(discord.ui.View):
         ticket_info = db_data["active_tickets"].get(channel_id, {})
         claimed_staff_id = ticket_info.get("staff_id")
         menu_type = ticket_info.get("menu_type", self.menu_type)
+        allowed_role_ids = ticket_info.get("allowed_role_ids", [])
 
         is_admin = interaction.user.guild_permissions.administrator
-        is_staff = interaction.user.id == claimed_staff_id
-        allowed_role_ids = ticket_info.get("allowed_role_ids", [])
-        has_allowed_role = any(r.id in allowed_role_ids for r in interaction.user.roles)
+        is_staff = (claimed_staff_id and interaction.user.id == claimed_staff_id)
+        has_allowed_role = any(r.id in [int(rid) for rid in allowed_role_ids] for r in interaction.user.roles)
 
         if not (is_admin or is_staff or has_allowed_role):
-            await interaction.response.send_message("❌ لا يمكنك إغلاق التكت! خيار الإغلاق مخصص للإدارة فقط.", ephemeral=True)
+            await interaction.response.send_message("❌ لا يمكنك إغلاق التكت! خيار الإغلاق مخصص للإدارة المعتمدة فقط.", ephemeral=True)
             return
 
         if menu_type == "admin" and claimed_staff_id:
@@ -187,10 +180,8 @@ class TicketControlView(discord.ui.View):
                 db_data["active_tickets"].pop(channel_id, None)
                 save_data(db_data)
                 await interaction.channel.delete()
-            except discord.NotFound:
+            except Exception:
                 pass
-
-# ==================== أزرار إنشاء التكت التفاعلية ====================
 
 class InteractiveTicketButton(discord.ui.Button):
     def __init__(self, label, emoji, button_text, menu_type, allowed_role_ids, observer_role_ids, btn_index=0, msg_id=""):
@@ -248,24 +239,29 @@ class InteractiveTicketButton(discord.ui.Button):
             interaction.user: discord.PermissionOverwrite(read_messages=True, send_messages=True),
         }
         
-        for role_id in allowed_roles + observer_roles:
+        all_roles_to_add = set([int(r) for r in allowed_roles + observer_roles])
+        for role_id in all_roles_to_add:
             role = guild.get_role(role_id)
             if role:
                 overwrites[role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
 
-        ticket_channel = await guild.create_text_channel(
-            name=channel_name,
-            category=category,
-            overwrites=overwrites
-        )
+        try:
+            ticket_channel = await guild.create_text_channel(
+                name=channel_name,
+                category=category,
+                overwrites=overwrites
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ حدث خطأ أثناء إنشاء روم التكت: {e}", ephemeral=True)
+            return
 
         db_data["active_tickets"][str(ticket_channel.id)] = {
             "owner_id": interaction.user.id,
             "staff_id": None,
             "menu_type": current_menu_type,
             "button_label": self.label,
-            "allowed_role_ids": allowed_roles,
-            "observer_role_ids": observer_roles
+            "allowed_role_ids": [int(r) for r in allowed_roles],
+            "observer_role_ids": [int(r) for r in observer_roles]
         }
         save_data(db_data)
 
@@ -296,8 +292,6 @@ class DynamicMenuView(discord.ui.View):
                 msg_id=str(msg_id)
             ))
 
-# ==================== لوحة وأزرار إعدادات المنيو (للمسؤولين) ====================
-
 class AddButtonSimpleModal(discord.ui.Modal, title="➕ إضافة زر جديد"):
     btn_label = discord.ui.TextInput(label="عنوان الزر (اسم الزر)", placeholder="مثال: تقديم شرطة", required=True)
     btn_emoji = discord.ui.TextInput(label="إيموجي الزر (اختياري)", placeholder="مثال: 🚔", required=False)
@@ -321,8 +315,9 @@ class AddButtonSimpleModal(discord.ui.Modal, title="➕ إضافة زر جديد
         menu_info["buttons"] = buttons
         db_data["menus"][self.message_id] = menu_info
         save_data(db_data)
+        
         await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-        await interaction.followup.send("✅ تم إضافة الزر بنجاح وتحديث المنيو! يمكنك تعديل رتبه ونصه من خيار (تعديل زر ✏️).", ephemeral=True)
+        await interaction.followup.send("✅ تم إضافة الزر بنجاح ونزل في المنيو فوراً! يمكنك تعديل رتبه ونصه من خيار (تعديل زر ✏️).", ephemeral=True)
 
 class EditButtonCompleteView(discord.ui.View):
     def __init__(self, message_id, button_index, button_data):
@@ -340,9 +335,10 @@ class EditButtonCompleteView(discord.ui.View):
         row=0
     )
     async def select_allowed(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        await interaction.response.defer(ephemeral=True)
         self.button_data["allowed_role_ids"] = [r.id for r in select.values]
         await self.save_and_update(interaction.guild, interaction.channel)
-        await interaction.response.send_message(f"✅ تم تحديث رتب الاستلام لهذا الزر ({len(select.values)} رتبة) وتحديث المنيو بنجاح!", ephemeral=True)
+        await interaction.followup.send(f"✅ تم تحديث رتب الاستلام لهذا الزر ({len(select.values)} رتبة) وتحديث المنيو بنجاح!", ephemeral=True)
 
     @discord.ui.select(
         cls=discord.ui.RoleSelect,
@@ -353,9 +349,10 @@ class EditButtonCompleteView(discord.ui.View):
         row=1
     )
     async def select_observer(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
+        await interaction.response.defer(ephemeral=True)
         self.button_data["observer_role_ids"] = [r.id for r in select.values]
         await self.save_and_update(interaction.guild, interaction.channel)
-        await interaction.response.send_message(f"✅ تم تحديث رتب الاطلاع لهذا الزر ({len(select.values)} رتبة) وتحديث المنيو بنجاح!", ephemeral=True)
+        await interaction.followup.send(f"✅ تم تحديث رتب الاطلاع لهذا الزر ({len(select.values)} رتبة) وتحديث المنيو بنجاح!", ephemeral=True)
 
     @discord.ui.button(label="📝 تعديل نص العنوان والإيموجي والرسالة", style=discord.ButtonStyle.primary, custom_id="edit_btn_text_details", row=2)
     async def edit_text_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -441,8 +438,9 @@ class MenuControlPanelView(discord.ui.View):
 
     @discord.ui.button(label="تحديث المنيو 🔄", style=discord.ButtonStyle.success, custom_id="panel_refresh_menu", row=2)
     async def refresh_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer(ephemeral=True)
         await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-        await interaction.response.send_message("✅ تم تحديث المنيو بنجاح!", ephemeral=True)
+        await interaction.followup.send("✅ تم تحديث المنيو بنجاح ونزلت جميع الأزرار!", ephemeral=True)
 
 class EditTitleModal(discord.ui.Modal, title="📝 تعديل العنوان"):
     new_title = discord.ui.TextInput(label="العنوان الجديد للمنيو", required=True)
@@ -484,6 +482,7 @@ class DeleteButtonSelect(discord.ui.Select):
         super().__init__(placeholder="اختر رقم الزر المُراد حذفه...", custom_id="delete_btn_select", options=options)
 
     async def callback(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
         selected_index = int(self.values[0])
         menu_info = db_data["menus"].get(self.message_id)
         if menu_info and "buttons" in menu_info:
@@ -494,7 +493,7 @@ class DeleteButtonSelect(discord.ui.Select):
                 db_data["menus"][self.message_id] = menu_info
                 save_data(db_data)
                 await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-                await interaction.response.send_message(f"✅ تم حذف الزر ({removed['label']}) وتحديث المنيو بنجاح!", ephemeral=True)
+                await interaction.followup.send(f"✅ تم حذف الزر ({removed['label']}) وتحديث المنيو بنجاح!", ephemeral=True)
 
 class DeleteButtonView(discord.ui.View):
     def __init__(self, message_id, buttons):
@@ -526,9 +525,19 @@ async def update_menu_message(guild, channel, message_id):
     msg_id_str = str(message_id)
     menu_info = db_data["menus"].get(msg_id_str, {})
     
+    target_msg = None
     try:
-        msg = await channel.fetch_message(int(message_id))
+        target_msg = await channel.fetch_message(int(message_id))
     except Exception:
+        for ch in guild.text_channels:
+            try:
+                target_msg = await ch.fetch_message(int(message_id))
+                if target_msg:
+                    break
+            except Exception:
+                continue
+
+    if not target_msg:
         return
 
     embed = discord.Embed(
@@ -543,9 +552,8 @@ async def update_menu_message(guild, channel, message_id):
     if view:
         bot.add_view(view)
 
-    await msg.edit(embed=embed, view=view)
+    await target_msg.edit(embed=embed, view=view)
 
-# ==================== الأوامر الإدارية والـ Slash Commands ====================
 
 @bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد")
 @app_commands.describe(نوع_المنيو="نوع المنيو (إداري أو عصابات/تقديم)")
@@ -575,7 +583,7 @@ async def create_menu(interaction: discord.Interaction, نوع_المنيو: app
 
     panel_view = MenuControlPanelView(msg_id)
     await interaction.response.send_message(
-        "✅ **تم إنشاء المنيو بنجاح!**\nقم بإضافة الأزرار وتعديلها عبر لوحة التحكم بالأسفل:",
+        "✅ **تم إنشاء المنيو بنجاح!**\nقم بإضافة الأزرار وتعديلها عبر لوحة التحكم بالأسفل وسينزل المنيو تلقائياً:",
         view=panel_view,
         ephemeral=True
     )
@@ -717,8 +725,6 @@ async def leaderboard_prefix(ctx):
 
     await ctx.send(embed=embed)
 
-# ==================== أحداث البوت والإحالة التلقائية (بدون تكرار) ====================
-
 @bot.event
 async def on_message(message: discord.Message):
     if message.author.bot:
@@ -729,7 +735,7 @@ async def on_message(message: discord.Message):
         ticket_info = db_data["active_tickets"][channel_id]
 
         if ticket_info.get("staff_id") is None:
-            allowed_role_ids = ticket_info.get("allowed_role_ids", [])
+            allowed_role_ids = [int(r) for r in ticket_info.get("allowed_role_ids", [])]
             is_staff = False
 
             author_role_ids = [r.id for r in message.author.roles]
