@@ -4,10 +4,10 @@ from discord import app_commands
 import os
 import json
 import asyncio
-import logging
 from datetime import datetime, timezone
+import logging
 
-# إخفاء رسائل الـ INFO الحمراء في Railway وجعل الـ Logs نظيفة
+# إعداد الـ Logging لإخفاء الرسائل الإعلامية (الحمراء) وجعل السجلات تظهر فقط عند وجود أخطاء حقيقية
 logging.basicConfig(level=logging.ERROR)
 
 intents = discord.Intents.default()
@@ -181,7 +181,7 @@ class TicketControlView(discord.ui.View):
             view = RatingView(staff_id=claimed_staff_id, ticket_channel=interaction.channel)
             await interaction.response.send_message("⭐ يرجى تقييم خدمة الإداري قبل إغلاق التكت:", view=view)
         else:
-            await interaction.response.send_message("🔒 جاري إغلاق التكت وحذفه نهائياً...", ephemeral=True)
+            await interaction.response.send_message("🔒 جاري إغلاق التكت وحذفه نهائياً...")
             await asyncio.sleep(2)
             try:
                 db_data["active_tickets"].pop(channel_id, None)
@@ -717,7 +717,7 @@ async def leaderboard_prefix(ctx):
 
     await ctx.send(embed=embed)
 
-# ==================== أحداث البوت والإحالة التلقائية ====================
+# ==================== أحداث البوت والإحالة التلقائية (بدون تكرار) ====================
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -778,7 +778,6 @@ async def on_command_error(ctx, error):
 
 @bot.event
 async def on_ready():
-    # تسجيل جميع الأزرار الدائمة لكي لا تفقد الاستجابة بعد إعادة تشغيل البوت
     bot.add_view(TicketControlView())
     for msg_id, menu_data in db_data.get("menus", {}).items():
         buttons = menu_data.get("buttons", [])
@@ -786,10 +785,11 @@ async def on_ready():
             bot.add_view(DynamicMenuView(buttons, menu_data.get("menu_type", "admin"), str(msg_id)))
 
     await bot.tree.sync()
-    print(f"Logged in as {bot.user} (ID: {bot.user.id})")
+    print(f"Logged in as {bot.user}")
 
 if __name__ == "__main__":
     TOKEN = os.environ.get("DISCORD_TOKEN")
     if not TOKEN:
         raise RuntimeError("Missing DISCORD_TOKEN environment variable.")
     bot.run(TOKEN)
+```eof
