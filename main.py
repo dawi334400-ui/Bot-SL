@@ -41,11 +41,11 @@ def save_data(data):
 db_data = load_data()
 
 class RatingView(discord.ui.View):
-    def __init__(self, staff_id, ticket_channel, owner_id):
+    def __init__(self, staff_id, ticket_channel, ticket_owner_id):
         super().__init__(timeout=None)
         self.staff_id = str(staff_id)
         self.ticket_channel = ticket_channel
-        self.owner_id = int(owner_id)
+        self.ticket_owner_id = ticket_owner_id
 
     @discord.ui.select(
         placeholder="⭐ اختر تقييم الخدمة الإدارية...",
@@ -59,8 +59,8 @@ class RatingView(discord.ui.View):
         ]
     )
     async def select_rating(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if interaction.user.id != self.owner_id:
-            await interaction.response.send_message("❌ التقييم مخصص فقط لصاحب التكت (المواطن) لمنع التلاعب بالنجوم!", ephemeral=True)
+        if interaction.user.id != self.ticket_owner_id:
+            await interaction.response.send_message("❌ تقييم الخدمة مخصص فقط للمواطن (صاحب التكت الأساسي)!", ephemeral=True)
             return
 
         await interaction.response.defer(ephemeral=True)
@@ -178,10 +178,8 @@ class TicketControlView(discord.ui.View):
             return
 
         if menu_type == "admin" and claimed_staff_id:
-            view = RatingView(staff_id=claimed_staff_id, ticket_channel=interaction.channel, owner_id=owner_id)
-            owner_user = interaction.guild.get_member(owner_id)
-            mention_owner = owner_user.mention if owner_user else "صاحب التكت"
-            await interaction.response.send_message(f"⭐ {mention_owner} يرجى تقييم خدمة الإداري قبل إغلاق التكت النهائي:", view=view)
+            view = RatingView(staff_id=claimed_staff_id, ticket_channel=interaction.channel, ticket_owner_id=owner_id)
+            await interaction.response.send_message("⭐ يرجى تقييم خدمة الإداري قبل إغلاق التكت:", view=view)
         else:
             await interaction.response.send_message("🔒 جاري إغلاق التكت وحذفه نهائياً...")
             await asyncio.sleep(2)
@@ -195,6 +193,7 @@ class TicketControlView(discord.ui.View):
 class InteractiveTicketButton(discord.ui.Button):
     def __init__(self, label, emoji, button_text, menu_type, allowed_role_ids, observer_role_ids, btn_index=0, msg_id=""):
         cid = f"dyn_btn_{msg_id}_{btn_index}" if msg_id else f"dyn_btn_{btn_index}"
+        
         parsed_emoji = emoji if emoji and emoji.strip() else None
         
         super().__init__(label=label, emoji=parsed_emoji, style=discord.ButtonStyle.primary, custom_id=cid)
