@@ -41,12 +41,13 @@ db_data = load_data()
 
 class RatingView(discord.ui.View):
     def __init__(self, staff_id, ticket_channel):
-        super().__init__(timeout=120)
+        super().__init__(timeout=None)
         self.staff_id = str(staff_id)
         self.ticket_channel = ticket_channel
 
     @discord.ui.select(
         placeholder="⭐ اختر تقييم الخدمة الإدارية...",
+        custom_id="ticket_rating_select",
         options=[
             discord.SelectOption(label="⭐ 5 - ممتاز جداً", value="5", description="خدمة ممتازة وسريعة"),
             discord.SelectOption(label="⭐ 4 - جيد جداً", value="4", description="خدمة جيدة جداً"),
@@ -82,11 +83,12 @@ class RatingView(discord.ui.View):
 
 class AddMemberSelectView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
 
     @discord.ui.select(
         cls=discord.ui.UserSelect,
-        placeholder="👥 اختر العضو الذي تريد إضافته للروم..."
+        placeholder="👥 اختر العضو الذي تريد إضافته للروم...",
+        custom_id="add_member_select"
     )
     async def select_member(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
         member = select.values[0]
@@ -95,11 +97,12 @@ class AddMemberSelectView(discord.ui.View):
 
 class RemoveMemberSelectView(discord.ui.View):
     def __init__(self):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
 
     @discord.ui.select(
         cls=discord.ui.UserSelect,
-        placeholder="🚫 اختر العضو الذي تريد إزالته من الروم..."
+        placeholder="🚫 اختر العضو الذي تريد إزالته من الروم...",
+        custom_id="remove_member_select"
     )
     async def select_member(self, interaction: discord.Interaction, select: discord.ui.UserSelect):
         member = select.values[0]
@@ -113,7 +116,7 @@ class RemoveMemberSelectView(discord.ui.View):
         await interaction.channel.set_permissions(member, overwrite=None)
         await interaction.response.send_message(f"✅ تم إزالة صلاحيات {member.mention} من هذا التكت.", ephemeral=False)
 
-# ==================== لوحة التحكم الخاصة بالتكت (أزرار إدارة التكت) ====================
+# ==================== لوحة التحكم الخاصة بالتكت ====================
 
 class TicketControlView(discord.ui.View):
     def __init__(self, menu_type="admin"):
@@ -187,7 +190,7 @@ class TicketControlView(discord.ui.View):
 
 class InteractiveTicketButton(discord.ui.Button):
     def __init__(self, label, emoji, button_text, menu_type, allowed_role_ids, observer_role_ids, btn_index=0, msg_id=""):
-        cid = f"dyn_btn_{msg_id}_{btn_index}" if msg_id else None
+        cid = f"dyn_btn_{msg_id}_{btn_index}" if msg_id else f"dyn_btn_{btn_index}"
         super().__init__(label=label, emoji=emoji, style=discord.ButtonStyle.primary, custom_id=cid)
         self.button_text = button_text
         self.menu_type = menu_type
@@ -200,7 +203,11 @@ class InteractiveTicketButton(discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
         user_id = interaction.user.id
 
-        menu_info = db_data["menus"].get(str(self.msg_id), {})
+        msg_id_target = self.msg_id
+        if (not msg_id_target or msg_id_target == "") and interaction.message:
+            msg_id_target = str(interaction.message.id)
+
+        menu_info = db_data["menus"].get(msg_id_target, {})
         buttons_list = menu_info.get("buttons", [])
         
         btn_data = None
@@ -210,6 +217,7 @@ class InteractiveTicketButton(discord.ui.Button):
         btn_text = btn_data.get("text", "") if btn_data else self.button_text
         allowed_roles = btn_data.get("allowed_role_ids", []) if btn_data else self.allowed_role_ids
         observer_roles = btn_data.get("observer_role_ids", []) if btn_data else self.observer_role_ids
+        current_menu_type = menu_info.get("menu_type", self.menu_type)
 
         for ticket_id, ticket_data in list(db_data["active_tickets"].items()):
             if ticket_data.get("owner_id") == user_id:
@@ -250,7 +258,7 @@ class InteractiveTicketButton(discord.ui.Button):
         db_data["active_tickets"][str(ticket_channel.id)] = {
             "owner_id": interaction.user.id,
             "staff_id": None,
-            "menu_type": self.menu_type,
+            "menu_type": current_menu_type,
             "button_label": self.label,
             "allowed_role_ids": allowed_roles,
             "observer_role_ids": observer_roles
@@ -260,13 +268,14 @@ class InteractiveTicketButton(discord.ui.Button):
         desc = btn_text if (btn_text and btn_text.strip()) else "📌 الرجاء توضيح طلبك وشرحه بالتفصيل. سيتم استلام التكت تلقائياً فور أول رد من الإداري."
 
         embed = discord.Embed(
-            title=f"🎟️ مرحباً بك في {channel_name}",
+            title=f"🎟️ مرحباً بك {interaction.user.display_name} في {channel_name}",
             description=desc,
             color=discord.Color.gold()
         )
-        view = TicketControlView(self.menu_type)
+        view = TicketControlView(current_menu_type)
         
-        await ticket_channel.send(content=f"{interaction.user.mention}", embed=embed, view=view)
+        # تم إلغاء المنشن الخارجي لمنع وصول إشعارات مزعجة للأعضاء
+        await ticket_channel.send(embed=embed, view=view)
         await interaction.followup.send(f"✅ تم إنشاء التكت بنجاح: {ticket_channel.mention}", ephemeral=True)
 
 class DynamicMenuView(discord.ui.View):
@@ -284,7 +293,7 @@ class DynamicMenuView(discord.ui.View):
                 msg_id=str(msg_id)
             ))
 
-# ==================== لوحة وأزرار إعدادات المنيو (للمسؤولين) ====================
+# ==================== لوحة وأزرار إعدادات المنيو (بدون مهلة) ====================
 
 class AddButtonSimpleModal(discord.ui.Modal, title="➕ إضافة زر جديد"):
     btn_label = discord.ui.TextInput(label="عنوان الزر (اسم الزر)", placeholder="مثال: تقديم شرطة", required=True)
@@ -292,7 +301,7 @@ class AddButtonSimpleModal(discord.ui.Modal, title="➕ إضافة زر جديد
     btn_text = discord.ui.TextInput(label="الرسالة والتعليمات داخل التكت", style=discord.TextStyle.paragraph, placeholder="أكتب الرسالة التي تظهر للعضو فور فتح هذا التكت...", required=False)
 
     def __init__(self, message_id):
-        super().__init__()
+        super().__init__(timeout=None)
         self.message_id = str(message_id)
 
     async def on_submit(self, interaction: discord.Interaction):
@@ -315,7 +324,7 @@ class AddButtonSimpleModal(discord.ui.Modal, title="➕ إضافة زر جديد
 
 class EditButtonCompleteView(discord.ui.View):
     def __init__(self, message_id, button_index, button_data):
-        super().__init__(timeout=180)
+        super().__init__(timeout=None)
         self.message_id = str(message_id)
         self.button_index = button_index
         self.button_data = button_data
@@ -325,6 +334,7 @@ class EditButtonCompleteView(discord.ui.View):
         placeholder="🛡️ حدد/عدل رتب الاستلام لهذا الزر...",
         min_values=0,
         max_values=10,
+        custom_id="edit_allowed_roles_select",
         row=0
     )
     async def select_allowed(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
@@ -337,6 +347,7 @@ class EditButtonCompleteView(discord.ui.View):
         placeholder="👀 حدد/عدل رتب الاطلاع لهذا الزر (اختياري)...",
         min_values=0,
         max_values=10,
+        custom_id="edit_observer_roles_select",
         row=1
     )
     async def select_observer(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
@@ -344,7 +355,7 @@ class EditButtonCompleteView(discord.ui.View):
         await self.save_and_update(interaction.guild, interaction.channel)
         await interaction.response.send_message(f"✅ تم تحديث رتب الاطلاع لهذا الزر ({len(select.values)} رتبة) وتحديث المنيو بنجاح!", ephemeral=True)
 
-    @discord.ui.button(label="📝 تعديل نص العنوان والإيموجي والرسالة", style=discord.ButtonStyle.primary, row=2)
+    @discord.ui.button(label="📝 تعديل نص العنوان والإيموجي والرسالة", style=discord.ButtonStyle.primary, custom_id="edit_btn_text_details", row=2)
     async def edit_text_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditButtonTextModal(self.message_id, self.button_index, self.button_data))
 
@@ -361,7 +372,7 @@ class EditButtonCompleteView(discord.ui.View):
 
 class EditButtonTextModal(discord.ui.Modal, title="📝 تعديل تفاصيل ومحتوى الزر"):
     def __init__(self, message_id, button_index, button_data):
-        super().__init__()
+        super().__init__(timeout=None)
         self.message_id = str(message_id)
         self.button_index = button_index
         self.button_data = button_data
@@ -396,19 +407,19 @@ class MenuControlPanelView(discord.ui.View):
         super().__init__(timeout=None)
         self.message_id = str(message_id)
 
-    @discord.ui.button(label="تعديل العنوان 📝", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="تعديل العنوان 📝", style=discord.ButtonStyle.primary, custom_id="panel_edit_title", row=0)
     async def edit_title(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditTitleModal(self.message_id))
 
-    @discord.ui.button(label="تعديل الوصف 📄", style=discord.ButtonStyle.primary, row=0)
+    @discord.ui.button(label="تعديل الوصف 📄", style=discord.ButtonStyle.primary, custom_id="panel_edit_desc", row=0)
     async def edit_desc(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(EditDescriptionModal(self.message_id))
 
-    @discord.ui.button(label="إضافة زر ➕", style=discord.ButtonStyle.success, row=1)
+    @discord.ui.button(label="إضافة زر ➕", style=discord.ButtonStyle.success, custom_id="panel_add_btn", row=1)
     async def add_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_modal(AddButtonSimpleModal(self.message_id))
 
-    @discord.ui.button(label="تعديل زر ✏️", style=discord.ButtonStyle.secondary, row=1)
+    @discord.ui.button(label="تعديل زر ✏️", style=discord.ButtonStyle.secondary, custom_id="panel_edit_btn", row=1)
     async def edit_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         menu_info = db_data["menus"].get(self.message_id, {})
         buttons = menu_info.get("buttons", [])
@@ -417,7 +428,7 @@ class MenuControlPanelView(discord.ui.View):
             return
         await interaction.response.send_message("اختر الزر الذي تريد تعديل إعداداته ورتبه ونصه:", view=EditButtonSelectView(self.message_id, buttons), ephemeral=True)
 
-    @discord.ui.button(label="حذف زر 🗑️", style=discord.ButtonStyle.danger, row=1)
+    @discord.ui.button(label="حذف زر 🗑️", style=discord.ButtonStyle.danger, custom_id="panel_delete_btn", row=1)
     async def delete_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         menu_info = db_data["menus"].get(self.message_id, {})
         buttons = menu_info.get("buttons", [])
@@ -426,7 +437,7 @@ class MenuControlPanelView(discord.ui.View):
             return
         await interaction.response.send_message("اختر رقم الزر المُراد حذفه:", view=DeleteButtonView(self.message_id, buttons), ephemeral=True)
 
-    @discord.ui.button(label="تحديث المنيو 🔄", style=discord.ButtonStyle.success, row=2)
+    @discord.ui.button(label="تحديث المنيو 🔄", style=discord.ButtonStyle.success, custom_id="panel_refresh_menu", row=2)
     async def refresh_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
         await update_menu_message(interaction.guild, interaction.channel, self.message_id)
         await interaction.response.send_message("✅ تم تحديث المنيو بنجاح!", ephemeral=True)
@@ -434,7 +445,7 @@ class MenuControlPanelView(discord.ui.View):
 class EditTitleModal(discord.ui.Modal, title="📝 تعديل العنوان"):
     new_title = discord.ui.TextInput(label="العنوان الجديد للمنيو", required=True)
     def __init__(self, message_id):
-        super().__init__()
+        super().__init__(timeout=None)
         self.message_id = str(message_id)
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -449,7 +460,7 @@ class EditTitleModal(discord.ui.Modal, title="📝 تعديل العنوان"):
 class EditDescriptionModal(discord.ui.Modal, title="📄 تعديل الوصف"):
     new_desc = discord.ui.TextInput(label="الوصف الجديد للمنيو", style=discord.TextStyle.paragraph, required=True)
     def __init__(self, message_id):
-        super().__init__()
+        super().__init__(timeout=None)
         self.message_id = str(message_id)
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
@@ -468,7 +479,7 @@ class DeleteButtonSelect(discord.ui.Select):
             discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=b.get("emoji"))
             for idx, b in enumerate(buttons)
         ]
-        super().__init__(placeholder="اختر رقم الزر المُراد حذفه...", options=options)
+        super().__init__(placeholder="اختر رقم الزر المُراد حذفه...", custom_id="delete_btn_select", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         selected_index = int(self.values[0])
@@ -485,7 +496,7 @@ class DeleteButtonSelect(discord.ui.Select):
 
 class DeleteButtonView(discord.ui.View):
     def __init__(self, message_id, buttons):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.add_item(DeleteButtonSelect(message_id, buttons))
 
 class EditButtonSelect(discord.ui.Select):
@@ -496,7 +507,7 @@ class EditButtonSelect(discord.ui.Select):
             discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=b.get("emoji"))
             for idx, b in enumerate(buttons)
         ]
-        super().__init__(placeholder="اختر رقم الزر المُراد تعديله...", options=options)
+        super().__init__(placeholder="اختر رقم الزر المُراد تعديله...", custom_id="edit_btn_select", options=options)
 
     async def callback(self, interaction: discord.Interaction):
         selected_index = int(self.values[0])
@@ -506,7 +517,7 @@ class EditButtonSelect(discord.ui.Select):
 
 class EditButtonSelectView(discord.ui.View):
     def __init__(self, message_id, buttons):
-        super().__init__(timeout=60)
+        super().__init__(timeout=None)
         self.add_item(EditButtonSelect(message_id, buttons))
 
 async def update_menu_message(guild, channel, message_id):
@@ -716,7 +727,7 @@ async def on_message(message: discord.Message):
     if channel_id in db_data["active_tickets"]:
         ticket_info = db_data["active_tickets"][channel_id]
 
-        if ticket_info["staff_id"] is None:
+        if ticket_info.get("staff_id") is None:
             allowed_role_ids = ticket_info.get("allowed_role_ids", [])
             is_staff = False
 
@@ -751,6 +762,7 @@ async def on_message(message: discord.Message):
                 except Exception:
                     pass
 
+                # رسالة الاستلام تُرسل لمرة واحدة فقط
                 await message.channel.send(embed=discord.Embed(
                     description=f"✅ **تم الاستلام تلقائياً بواسطة:** {message.author.mention}\n🔒 تم قفل التكت ومنع باقي الإداريين.",
                     color=discord.Color.green()
