@@ -279,7 +279,7 @@ class InteractiveTicketButton(discord.ui.Button):
 
         embed = discord.Embed(
             title=f"🎟️ مرحباً بك {interaction.user.display_name} في {channel_name}",
-            description=desc,
+            description=desc[:4000],
             color=discord.Color.gold()
         )
         view = TicketControlView(current_menu_type)
@@ -306,8 +306,7 @@ class DynamicMenuView(discord.ui.View):
                     btn_index=idx,
                     msg_id=str(msg_id)
                 ))
-            except Exception as e:
-                print(f"Error adding button: {e}")
+            except Exception:
                 self.add_item(InteractiveTicketButton(
                     label=btn.get("label", "فتح تكت"),
                     emoji=None,
@@ -347,13 +346,13 @@ class AddButtonSimpleModal(discord.ui.Modal, title="➕ إضافة زر جديد
             db_data["menus"][self.message_id] = menu_info
             save_data(db_data)
             
-            success_update = await update_menu_message(interaction.guild, interaction.channel, self.message_id)
+            success_update, err_msg = await update_menu_message(interaction.guild, interaction.channel, self.message_id)
             if success_update:
                 await interaction.followup.send("✅ تم إضافة الزر بنجاح ونزل في المنيو فوراً!", ephemeral=True)
             else:
-                await interaction.followup.send("⚠️ تم حفظ الزر في قاعدة البيانات ولكن تعذر تحديث الرسالة تلقائياً. اضغط على زر 'تحديث المنيو 🔄' لتنزيله.", ephemeral=True)
+                await interaction.followup.send(f"⚠️ تعذر تحديث المنيو تلقائياً بسبب: {err_msg}\nحاول الضغط على زر 'تحديث المنيو 🔄' الآن.", ephemeral=True)
         except Exception as e:
-            await interaction.followup.send(f"❌ حدث خطأ أثناء إضافة الزر: {e}\nتأكد من ترك الإيموجي فارغاً إذا لم تكن متأكداً منه.", ephemeral=True)
+            await interaction.followup.send(f"❌ حدث خطأ أثناء إضافة الزر: {e}", ephemeral=True)
 
 class EditButtonCompleteView(discord.ui.View):
     def __init__(self, message_id, button_index, button_data):
@@ -475,8 +474,11 @@ class MenuControlPanelView(discord.ui.View):
     @discord.ui.button(label="تحديث المنيو 🔄", style=discord.ButtonStyle.success, custom_id="panel_refresh_menu", row=2)
     async def refresh_menu(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer(ephemeral=True)
-        await update_menu_message(interaction.guild, interaction.channel, self.message_id)
-        await interaction.followup.send("✅ تم تحديث المنيو بنجاح ونزلت جميع الأزرار!", ephemeral=True)
+        success, err_msg = await update_menu_message(interaction.guild, interaction.channel, self.message_id)
+        if success:
+            await interaction.followup.send("✅ تم تحديث المنيو بنجاح ونزلت جميع الأزرار!", ephemeral=True)
+        else:
+            await interaction.followup.send(f"⚠️ تعذر تحديث المنيو بسبب: {err_msg}", ephemeral=True)
 
 class EditTitleModal(discord.ui.Modal, title="📝 تعديل العنوان"):
     new_title = discord.ui.TextInput(label="العنوان الجديد للمنيو", required=True)
@@ -502,7 +504,11 @@ class EditDescriptionModal(discord.ui.Modal, title="📄 تعديل الوصف")
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         menu_info = db_data["menus"].get(self.message_id, {})
-        menu_info["description"] = self.new_desc.value.strip()
+        desc_text = self.new_desc.value.strip()
+        if len(desc_text) > 3900:
+            desc_text = desc_text[:3900] + "\n\n...(تم قص الجزء الزائد لتجاوز الحد المسموح به في ديسكورد)"
+
+        menu_info["description"] = desc_text
         db_data["menus"][self.message_id] = menu_info
         save_data(db_data)
         await update_menu_message(interaction.guild, interaction.channel, self.message_id)
@@ -511,10 +517,16 @@ class EditDescriptionModal(discord.ui.Modal, title="📄 تعديل الوصف")
 class DeleteButtonSelect(discord.ui.Select):
     def __init__(self, message_id, buttons):
         self.message_id = str(message_id)
-        options = [
-            discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=b.get("emoji"))
-            for idx, b in enumerate(buttons)
-        ]
+        options = []
+        for idx, b in enumerate(buttons):
+            em = b.get("emoji")
+            if em and not em.strip():
+                em = None
+            try:
+                options.append(discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=em))
+            except Exception:
+                options.append(discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx)))
+                
         super().__init__(placeholder="اختر رقم الزر المُراد حذفه...", custom_id="delete_btn_select", options=options)
 
     async def callback(self, interaction: discord.Interaction):
@@ -540,10 +552,16 @@ class EditButtonSelect(discord.ui.Select):
     def __init__(self, message_id, buttons):
         self.message_id = str(message_id)
         self.buttons = buttons
-        options = [
-            discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=b.get("emoji"))
-            for idx, b in enumerate(buttons)
-        ]
+        options = []
+        for idx, b in enumerate(buttons):
+            em = b.get("emoji")
+            if em and not em.strip():
+                em = None
+            try:
+                options.append(discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx), emoji=em))
+            except Exception:
+                options.append(discord.SelectOption(label=f"زر رقم #{idx + 1}: {b['label']}", value=str(idx)))
+
         super().__init__(placeholder="اختر رقم الزر المُراد تعديله...", custom_id="edit_btn_select", options=options)
 
     async def callback(self, interaction: discord.Interaction):
@@ -574,27 +592,40 @@ async def update_menu_message(guild, channel, message_id):
                 continue
 
     if not target_msg:
-        return False
+        return False, "لم يتم العثور على رسالة المنيو في القناة."
+
+    raw_desc = menu_info.get("description", "مرحباً بك في مركز الدعم!")
+    if len(raw_desc) > 3900:
+        raw_desc = raw_desc[:3900] + "\n...(تم قص النص الزائد للالتزام بحدود ديسكورد)"
 
     embed = discord.Embed(
         title=menu_info.get("title", "مركز الدعم والمساعدة"),
-        description=menu_info.get("description", "مرحباً بك في مركز الدعم!"),
+        description=raw_desc,
         color=discord.Color.gold()
     )
 
     buttons_list = menu_info.get("buttons", [])
-    view = DynamicMenuView(buttons_list, menu_info.get("menu_type", "admin"), msg_id_str) if buttons_list else None
-
-    if view:
-        bot.add_view(view)
+    
+    view = None
+    if buttons_list:
+        try:
+            view = DynamicMenuView(buttons_list, menu_info.get("menu_type", "admin"), msg_id_str)
+            bot.add_view(view)
+        except Exception as e:
+            for b in buttons_list:
+                b["emoji"] = None
+            menu_info["buttons"] = buttons_list
+            db_data["menus"][msg_id_str] = menu_info
+            save_data(db_data)
+            view = DynamicMenuView(buttons_list, menu_info.get("menu_type", "admin"), msg_id_str)
+            bot.add_view(view)
 
     try:
         await target_msg.edit(embed=embed, view=view)
-        return True
+        return True, None
     except Exception as e:
         print(f"Error editing menu message: {e}")
-        return False
-
+        return False, str(e)
 
 @bot.tree.command(name="إنشاء_منيو", description="إنشاء منيو تفاعلي جديد")
 @app_commands.describe(نوع_المنيو="نوع المنيو (إداري أو عصابات/تقديم)")
@@ -833,7 +864,10 @@ async def on_ready():
         bot.add_view(MenuControlPanelView(str(msg_id)))
         buttons = menu_data.get("buttons", [])
         if buttons:
-            bot.add_view(DynamicMenuView(buttons, menu_data.get("menu_type", "admin"), str(msg_id)))
+            try:
+                bot.add_view(DynamicMenuView(buttons, menu_data.get("menu_type", "admin"), str(msg_id)))
+            except Exception:
+                pass
 
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
