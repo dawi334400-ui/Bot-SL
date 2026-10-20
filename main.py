@@ -17,7 +17,7 @@ intents.guilds = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ملفات التخزين المحلية للأنظمة
+# ملفات التخزين المحلية للأنظمة الكاملة
 DATA_FILE = "bot_data.json"
 BANK_DATA_FILE = "bank_data.json"
 GAMES_DATA_FILE = "games_data.json"
@@ -47,19 +47,19 @@ def save_json(filename, data):
         pass
 
 db_data = load_json(DATA_FILE, {"menus": {}, "staff_stats": {}, "active_tickets": {}})
-bank_db = load_json(BANK_DATA_FILE, {"users": {}, "organizations": {}, "settings": {"games_rewards": {"فك الشفرة": {"سهل": 100, "متوسط": 250, "صعب": 500}, "الكنز": {"سهل": 150, "متوسط": 300, "صعب": 600}, "تحدي الذكاء": {"سهل": 200, "متوسط": 400, "صعب": 800}}}, "logs": []})
+bank_db = load_json(BANK_DATA_FILE, {"users": {}, "organizations": {}, "settings": {}, "logs": []})
 games_db = load_json(GAMES_DATA_FILE, {"allowed_roles": [], "active_game": None})
 security_db = load_json(SECURITY_DATA_FILE, {"whitelist": [], "log_channel": None, "protected_roles": []})
 sectors_db = load_json(SECTORS_DATA_FILE, {"sectors": {}})
 ai_db = load_json(AI_DATA_FILE, {"speaking_mode": False, "ai_channels": []})
 welcome_db = load_json(WELCOME_FILE, {
-    "welcome_enabled": True, "welcome_channel_id": None,
+    "welcome_enabled": False, "welcome_channel_id": None,
     "welcome_message": "يا هلا ومرحبا بـ {mention}، نورت سيرفرنا {server}. أنت العضو رقم {count}.",
-    "leave_enabled": True, "leave_channel_id": None,
+    "leave_enabled": False, "leave_channel_id": None,
     "leave_message": "غادر السيرفر {name}، وأصبح عدد الأعضاء الآن {count}."
 })
 logs_db = load_json(LOGS_FILE, {"log_channel_id": None})
-levels_db = load_json(LEVELS_FILE, {"users": {}})
+levels_db = load_json(LEVELS_FILE, {"users": {}, "settings": {"check_channel_id": None, "trigger_word": "لفلي"}})
 reports_db = load_json(REPORTS_FILE, {"reports": [], "settings": {}})
 lock_db = load_json(LOCK_FILE, {"locked_channels": {}})
 
@@ -128,6 +128,14 @@ class BankMainView(discord.ui.View):
         user_data = bank_db["users"].setdefault(user_id, {"balance": 1000, "history": []})
         embed = discord.Embed(title=f"💳 حساب {interaction.user.display_name}", description=f"💰 **الرصيد الحالي:** `{user_data['balance']}`", color=discord.Color.gold())
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="البنك", description="عرض لوحة البنك المالي")
+async def bank_panel_cmd(interaction: discord.Interaction):
+    embed = discord.Embed(title="🏦 البنك المركزي للسيرفر", description="اختر من الخيارات أدناه لإدارة حسابك المؤسسي أو الشخصي:", color=discord.Color.gold())
+    if interaction.user.guild_permissions.administrator:
+        await interaction.response.send_message(embed=embed, view=AdminBankPanelView(), ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=embed, view=BankMainView(), ephemeral=True)
 
 # ----------------- 🎟️ نظام التكتات والمنيو التفاعلي -----------------
 class TicketControlView(discord.ui.View):
@@ -247,7 +255,7 @@ async def whitelist_cmd(interaction: discord.Interaction, عضو: discord.Member
         save_json(SECURITY_DATA_FILE, security_db)
         await interaction.response.send_message(f"✅ تم إضافة {عضو.mention} إلى القائمة البيضاء المحمية.", ephemeral=True)
 
-# ----------------- 👁️ نظام الوقّات (سجلات المراقبة) -----------------
+# ----------------- 👁️ نظام الوقّات (سجلات المراقبة الشاملة) -----------------
 @bot.tree.command(name="تعيين_روم_الوقات", description="تعيين الروم الخاص بسجلات المراقبة (الوقّات)")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_log_channel(interaction: discord.Interaction, الروم: discord.TextChannel):
@@ -263,9 +271,10 @@ async def on_message_delete(message):
     if log_ch_id:
         channel = message.guild.get_channel(log_ch_id)
         if channel:
+            content_desc = message.content or "*(رسالة تحتوى على مرفقات / صور)*"
             embed = discord.Embed(
                 title="👁️ [سجلات الوقّات] رسالة محذوفة",
-                description=f"**المستخدم:** {message.author.mention}\n**الروم:** {message.channel.mention}\n**المحتوى:**\n{message.content or '*(محتوى فارغ أو مرفقات)*'}",
+                description=f"**المستخدم:** {message.author.mention}\n**الروم:** {message.channel.mention}\n**المحتوى:**\n{content_desc}",
                 color=discord.Color.orange(),
                 timestamp=datetime.now(timezone.utc)
             )
@@ -287,7 +296,35 @@ async def on_message_edit(before, after):
             )
             await channel.send(embed=embed)
 
-# ----------------- 🎮 نظام الألعاب (10 ألعاب مع التسجيل التلقائي) -----------------
+@bot.event
+async def on_guild_channel_delete(channel):
+    log_ch_id = logs_db.get("log_channel_id")
+    if log_ch_id:
+        log_channel = channel.guild.get_channel(log_ch_id)
+        if log_channel:
+            embed = discord.Embed(
+                title="👁️ [سجلات الوقّات] حذف روم",
+                description=f"**اسم الروم المحذوف:** `{channel.name}`\n**النوع:** `{channel.type}`",
+                color=discord.Color.red(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            await log_channel.send(embed=embed)
+
+@bot.event
+async def on_guild_channel_create(channel):
+    log_ch_id = logs_db.get("log_channel_id")
+    if log_ch_id:
+        log_channel = channel.guild.get_channel(log_ch_id)
+        if log_channel:
+            embed = discord.Embed(
+                title="👁️ [سجلات الوقّات] إنشاء روم / رابط",
+                description=f"**اسم الروم الجديد:** {channel.mention}\n**النوع:** `{channel.type}`",
+                color=discord.Color.green(),
+                timestamp=datetime.now(timezone.utc)
+            )
+            await log_channel.send(embed=embed)
+
+# ----------------- 🎮 نظام الألعاب الاحترافي (10 ألعاب مع التسجيل التلقائي) -----------------
 class GameSignupView(discord.ui.View):
     def __init__(self, game_name, required_count=2):
         super().__init__(timeout=60)
@@ -305,7 +342,7 @@ class GameSignupView(discord.ui.View):
         if len(self.participants) >= self.required_count:
             self.stop()
 
-@bot.tree.command(name="لعبة", description="تشغيل إحدى الألعاب العشر مع التسجيل التلقائي")
+@bot.tree.command(name="لعبة", description="تشغيل إحدى الألعاب العشر مع التسجيل التلقائي الاحترافي")
 @app_commands.choices(اللعبة=[
     app_commands.Choice(name="1. التخمين", value="التخمين"),
     app_commands.Choice(name="2. من أنا؟", value="من أنا؟"),
@@ -321,16 +358,16 @@ class GameSignupView(discord.ui.View):
 async def start_game_cmd(interaction: discord.Interaction, اللعبة: app_commands.Choice[str]):
     game_name = اللعبة.value
     view = GameSignupView(game_name, required_count=2)
-    embed = discord.Embed(title=f"🎮 لعبة: {game_name}", description="اضغط على زر التسجيل أدناه للمشاركة في الجولة!", color=discord.Color.blue())
+    embed = discord.Embed(title=f"🎮 لعبة: {game_name}", description="اضغط على زر التسجيل أدناه للمشاركة في الجولة الحالية!", color=discord.Color.blue())
     await interaction.response.send_message(embed=embed, view=view)
     await view.wait()
     if view.participants:
         winner = random.choice(view.participants)
-        await interaction.followup.send(content=f"🎉 انتهت اللعبة **{game_name}** بفوز العضو {winner.mention}! مبروك!")
+        await interaction.followup.send(content=f"🎉 انتهت اللعبة **{game_name}** بفوز العضو {winner.mention}! مبروك الفوز والتفاعل الاحترافي!")
     else:
-        await interaction.followup.send(content="❌ لم يكتمل عدد المشاركين المطلوب.")
+        await interaction.followup.send(content="❌ لم يكتمل عدد المشاركين المطلوب في الوقت المحدد.")
 
-# ----------------- 💡 نظام الاقتراحات التفاعلي -----------------
+# ----------------- 💡 نظام الاقتراحات والتصويت -----------------
 class SuggestionAdminView(discord.ui.View):
     def __init__(self, author_id):
         super().__init__(timeout=None)
@@ -402,7 +439,7 @@ async def suggestion_cmd(interaction: discord.Interaction, الاقتراح: str
     view = SuggestionAdminView(interaction.user.id)
     await interaction.response.send_message(embed=embed, view=view)
 
-# ----------------- 📊 نظام اللفلات والخبرة والترقية الإدارية -----------------
+# ----------------- 📊 نظام اللفلات، الخبرة، وروم الفحص المخصص -----------------
 class AdminUpgradeModal(discord.ui.Modal, title="⬆️ لوحة ترقية العضو الإدارية"):
     member_id = discord.ui.TextInput(label="آيدي العضو", placeholder="اكتب الآيدي هنا...", required=True)
     target_level = discord.ui.TextInput(label="اللفل المطلوب", placeholder="مثال: 20", required=True)
@@ -438,14 +475,22 @@ class AdminUpgradeModal(discord.ui.Modal, title="⬆️ لوحة ترقية ال
 async def upgrade_cmd(interaction: discord.Interaction):
     await interaction.response.send_modal(AdminUpgradeModal())
 
+@bot.tree.command(name="اعدادات_فحص_اللفل", description="تحديد روم فحص الاكس بي والكلمة المفتاحية المخصصة")
+@app_commands.checks.has_permissions(administrator=True)
+async def set_level_check_cmd(interaction: discord.Interaction, الروم: discord.TextChannel, الكلمة: str):
+    levels_db["settings"]["check_channel_id"] = الروم.id
+    levels_db["settings"]["trigger_word"] = الكلمة.strip()
+    save_json(LEVELS_FILE, levels_db)
+    await interaction.response.send_message(f"✅ تم ضبط روم فحص اللفل إلى {الروم.mention} والكلمة المطلوبة هي: `{الكلمة}`", ephemeral=True)
+
 @bot.tree.command(name="لفلي", description="معرفة مستواك ونقاط خبرتك الحالية")
 async def my_level_cmd(interaction: discord.Interaction):
     u_data = levels_db["users"].setdefault(str(interaction.user.id), {"xp": 0, "level": 0})
     embed = discord.Embed(title=f"📊 مستوى العضو {interaction.user.display_name}", description=f"⭐ **اللفل:** `{u_data['level']}`\n✨ **الخبرة (XP):** `{u_data['xp']}`", color=discord.Color.purple())
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# ----------------- 👋 نظام الترحيب والخروج المتقدم -----------------
-@bot.tree.command(name="اعدادات_الترحيب", description="تعيين روم وأسلوب رسائل الترحيب والخروج")
+# ----------------- 👋 نظام الترحيب والخروج المتقدم (مع الروابط والمنشن وعدد الأعضاء) -----------------
+@bot.tree.command(name="اعدادات_الترحيب", description="تعيين روم وأسلوب رسائل الترحيب والخروج بروابط ورسائل مخصصة")
 @app_commands.checks.has_permissions(administrator=True)
 async def welcome_settings_cmd(interaction: discord.Interaction, نوع_الرسالة: str, الروم: discord.TextChannel):
     if "رحب" in نوع_الرسالة or "join" in نوع_الرسالة.lower():
@@ -516,13 +561,13 @@ async def stop_say_command(interaction: discord.Interaction):
     save_json(AI_DATA_FILE, ai_db)
     await interaction.response.send_message("✅ تم إيقاف وضع التحدث المباشر.", ephemeral=True)
 
-# ----------------- الأحداث العامة وتفاعل الرسائل ($ وقفل القنوات و XP) -----------------
+# ----------------- الحدث المركزي للرسائل ($, قفل القنوات، فحص الكلمة المخصصة، و XP) -----------------
 @bot.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # نظام قفل وفتح القنوات بالرمز $
+    # 1. نظام قفل وفتح القنوات بالرمز $
     if message.content.strip() == "$":
         ch_id_str = str(message.channel.id)
         guild = message.guild
@@ -561,10 +606,25 @@ async def on_message(message):
             await message.channel.send("🔓 تم فتح القناة وإعادة الوضع السابق.", delete_after=5)
         return
 
-    # نظام اكتساب الخبرة التلقائي (XP) لكل تفاعل رسالة (كل 100 XP = لفل)
+    # 2. فحص الكلمة المخصصة في الروم المخصص لفحص الـ XP واللفل
+    settings = levels_db.get("settings", {})
+    target_ch_id = settings.get("check_channel_id")
+    trigger_w = settings.get("trigger_word", "لفلي")
+    
+    if target_ch_id and message.channel.id == target_ch_id and message.content.strip() == trigger_w:
+        u_data = levels_db["users"].setdefault(str(message.author.id), {"xp": 0, "level": 0})
+        embed = discord.Embed(
+            title=f"📊 تقرير مستوى {message.author.display_name}",
+            description=f"⭐ **المستوى (Level):** `{u_data['level']}`\n✨ **الخبرة (XP):** `{u_data['xp']}`",
+            color=discord.Color.blurple()
+        )
+        await message.reply(embed=embed, delete_after=10)
+        return
+
+    # 3. نظام اكتساب الخبرة التلقائي (XP) لكل تفاعل رسالة
     u_key = str(message.author.id)
     u_data = levels_db["users"].setdefault(u_key, {"xp": 0, "level": 0})
-    u_data["xp"] += 5  # منح 5 نقاط خبرة لكل رسالة تفاعل
+    u_data["xp"] += 5  
     
     calculated_level = u_data["xp"] // 100
     if calculated_level > u_data["level"]:
@@ -576,10 +636,11 @@ async def on_message(message):
     
     save_json(LEVELS_FILE, levels_db)
 
+    # 4. ردود الذكاء والذكاء الاصطناعي التفاعلي
     if "السلام" in message.content:
         await message.channel.send(f"وعليكم السلام ورحمة الله وبركاته يا {message.author.mention} 🌸")
     elif "ابندك" in message.content or "تبند" in message.content:
-        await message.channel.send(f"سوق أقوم أبندك إذا لم تسكت !😘 🤣")
+        await message.channel.send(f"سوف أقوم بتبديك إذا لم تسكت !😘 🤣")
         
     await bot.process_commands(message)
 
